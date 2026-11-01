@@ -57,7 +57,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parent.parent
-assert (ROOT / "courses.yaml").exists() or (ROOT / "SECRETS.md").exists(), (
+assert (ROOT / "src").is_dir(), (
     f"ROOT misresolved in cron_base.py: {ROOT} — expected project root with "
     f"courses.yaml or SECRETS.md. Did this file move?"
 )
@@ -115,7 +115,7 @@ class ParamSpec:
 @dataclasses.dataclass(frozen=True)
 class TemplateSpec:
     name: str                              # filesystem-discovered, matches cron_template_<name>.py
-    kind: Literal["email", "scan", "autonomous"]
+    kind: Literal["email", "scan", "autonomous", "local"]
     description: str                       # one-line shown by list-templates
     param_schema: list[ParamSpec]          # tunable knobs (course_id/schedule/recipient are common, not in schema)
     execution_time_limit: str              # ISO 8601 duration "PT5M" / "PT45M"

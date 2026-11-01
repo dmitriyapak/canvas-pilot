@@ -116,3 +116,9 @@ CLAUDE.local.md
 ?.??.md
 ??.?.md
 ??.??.md
+
+# Local development scratch
+work/
+deploy/penn/state/
+deploy/penn/secrets/
+deploy/penn/.env

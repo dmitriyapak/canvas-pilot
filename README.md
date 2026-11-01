@@ -37,6 +37,21 @@ workflows do not depend on it.
 See [Canvas Pilot vs Canvas MCP](./docs/COMPARISON.md) for the longer
 comparison.
 
+## Penn Canvas Pilot 2.0 server
+
+The original Canvas Pilot package and its workflows are preserved in full,
+including humanizers, quiz interaction helpers, scheduled submission and legacy
+email utilities. No original feature is removed by the Penn server addition.
+
+The additive server lives in `src/penn_server/`; see
+[deployment instructions](deploy/penn/README.md). It uses authenticated Streamable
+HTTP, encrypted browser/PennKey state, heartbeat and automatic recovery.
+The Penn server itself uses local logs and requires no mail credentials.
+Its testing deployment blocks every real Canvas write. Original package workflows
+are restored as source capabilities; they have not been enabled or executed
+against real Canvas courses during this build.
+
+
 ## Workflow
 
 ```mermaid
