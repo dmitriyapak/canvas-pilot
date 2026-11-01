@@ -1,28 +1,23 @@
-"""In-process read-only scan/reminder schedule; no agent process or submissions."""
+"""In-process read-only daily scan; results persist locally, without alerts."""
 
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+log = logging.getLogger("penn.schedule")
+
 
 class ReadOnlySchedule:
-    def __init__(self, tools, notifier, vault):
-        self.tools, self.notifier, self.vault = tools, notifier, vault
+    def __init__(self, tools, vault):
+        self.tools, self.vault = tools, vault
 
     async def tick(self, now=None):
         now = now or datetime.now(ZoneInfo("America/New_York"))
         if now.hour < 9:
             return
         day = now.date().isoformat()
-        previous = self.vault.read("schedule", {})
-        if previous.get("last_scan_day") == day:
+        if self.vault.read("schedule", {}).get("last_scan_day") == day:
             return
         plan = await self.tools.scan()
-        self.notifier.queue(
-            "daily-scan-" + day,
-            "Penn Canvas daily scan",
-            "Your read-only Canvas scan is ready through the connector. "
-            + str(len(plan["courses"]))
-            + " courses inspected. No coursework was submitted or changed.",
-        )
-
         self.vault.write("schedule", {"last_scan_day": day})
+        log.info("daily_scan_completed courses=%d", len(plan["courses"]))

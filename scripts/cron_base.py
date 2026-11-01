@@ -1,44 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""canvas-cron framework — ActionTemplate ABC + CronInstance dataclass +
-EmailTemplate / AutonomousTemplate subclasses + shared helpers.
+"""Canvas scheduler: local summaries, read-only scans and existing shared helpers.
 
-This is the SHARED INFRASTRUCTURE for canvas-cron. Templates are course-agnostic
-Python modules at `scripts/cron_template_<name>.py`. User-created cron instances
-(course_id + schedule + params) live in `_private/cron_instances.yaml`. The
-canvas-cron skill is the only entry point — students never write Python files
-or edit yaml by hand.
-
-Two kinds (CEO requirement: structural separation):
-
-  EmailTemplate       — exec <10s. Reads Canvas, sends email via
-                        src/gws_email.send_email. NO submit capability.
-                        Adding submit to an email template requires promoting
-                        it to AutonomousTemplate (different install gate).
-
-  ScanTemplate        — runs a fresh Codex session in scan-only mode. It may
-                        read Canvas and write the daily plan, but it never
-                        receives mutation authority.
-
-  AutonomousTemplate — runs a fresh Codex session with a signed durable
-                        automation receipt. The receipt is validated against
-                        the exact Canvas origin, course, template, and allowed
-                        mutation actions before every fire.
-                        Has consecutive_failures ledger + N=1/[REPEATED 2]
-                        /[PAUSED] escalation + Sunday heartbeat. Auto-submits
-                        to Canvas — install flow requires the user to type
-                        `授权` keyword before this template gets registered.
-
-Cookie health check (CEO 5/16 evening): ActionTemplate.run() invokes
-`_cookie_check` BEFORE pre_run. If Canvas session is dead (cookies expired,
-browser not authenticated) the template sends a single wake-up email to
-`instance.recipient` telling the user to run `python -m src.canvas_login`,
-then aborts without launching Codex. Scan/autonomous fires return non-zero so
-Task Scheduler records the failed auth gate. In dry_run=True
-mode the cookie probe is SKIPPED entirely (saves 5s × N gates during install
-flow — cookies will be enforced on the first real OS-triggered fire).
-
-ROOT calc: `Path(__file__).resolve().parent.parent` from scripts/cron_base.py
-→ project root (depth 2). An assert fails loud if the file ever moves.
+No Gmail or mail transport is available. Session failures, per-item failure
+counters and scheduler heartbeats are recorded locally. The scheduled submit
+template is removed. Legacy recipient fields are accepted solely to read old
+private instance files; no recipient or alert credentials are used.
 """
 from __future__ import annotations
 
@@ -115,7 +81,7 @@ class ParamSpec:
 @dataclasses.dataclass(frozen=True)
 class TemplateSpec:
     name: str                              # filesystem-discovered, matches cron_template_<name>.py
-    kind: Literal["email", "scan", "autonomous"]
+    kind: Literal["local", "scan", "autonomous"]
     description: str                       # one-line shown by list-templates
     param_schema: list[ParamSpec]          # tunable knobs (course_id/schedule/recipient are common, not in schema)
     execution_time_limit: str              # ISO 8601 duration "PT5M" / "PT45M"
@@ -166,7 +132,7 @@ class CronInstance:
         s = d.get("schedule") or {}
         return cls(
             name=name,
-            template=d["template"],
+            template={"email_pending_reminder": "pending_reminder"}.get(d["template"],d["template"]),
             course_id=str(d["course_id"]),
             schedule=Schedule(
                 days_interval=int(s.get("days_interval", 1)),
@@ -187,7 +153,7 @@ class CronInstance:
 # ============================================================================
 
 class ActionTemplate(abc.ABC):
-    """Abstract base. Each concrete template subclasses EmailTemplate or
+    """Abstract base. Each concrete template subclasses LocalTemplate or
     AutonomousTemplate (not this class directly).
     """
     spec: TemplateSpec
@@ -317,18 +283,18 @@ class ActionTemplate(abc.ABC):
         except Exception as e:
             self.log(inst, f"warning: release_lock failed: {e}")
 
-    def send_email(self, subject: str, body: str, recipient: str,
-                    inst: Optional[CronInstance] = None) -> bool:
-        from src.gws_email import send_email as _send
-        logger = (lambda m: self.log(inst, m)) if inst is not None else (
-            lambda m: print(m, file=sys.stderr, flush=True)
-        )
-        return _send(subject, body, recipient, log=logger)
+    def log_notice(self, subject: str, body: str, inst: Optional[CronInstance] = None) -> bool:
+        # Local only: never open a mail transport or accept alert credentials.
+        if inst is not None:
+            self.log(inst, subject + "\n" + body)
+        else:
+            print(subject + "\n" + body, file=sys.stderr, flush=True)
+        return True
 
     # ----- Canvas session health gate (all template kinds) -----
     def _cookie_check(self, inst: CronInstance, dry_run: bool) -> Optional[str]:
         """Probe Canvas session WITHOUT launching Chrome. If dead and not
-        dry-run, email the user a wake-up and abort this fire. In dry-run
+        dry-run, record the failure locally and abort this fire. In dry-run
         mode, SKIP the probe entirely (no 5s latency in install gate flow).
         """
         if dry_run:
@@ -342,20 +308,8 @@ class ActionTemplate(abc.ABC):
             return f"cookie probe failed: {e}"
         if ok:
             return None
-        # Cookie is dead — send wake-up email, abort fire
-        subject = f"[Canvas cron] Cookie expired — please login (instance={inst.name})"
-        body = (
-            f"Canvas session cookie 已失效（可能 24h 过期，或浏览器没 authenticate）。\n"
-            f"  instance:  {inst.name}\n"
-            f"  template:  {inst.template}\n"
-            f"  course_id: {inst.course_id}\n\n"
-            f"这次 cron 触发没有 dispatch / 发提醒，只发本封邮件。\n\n"
-            f"修复：在 Codex session 跑一次 `python -m src.canvas_login` 重登 Canvas。\n"
-            f"下次到点 cron 会自动重试。\n"
-        )
-        self.send_email(subject, body, inst.recipient, inst=inst)
-        self.log(inst, "cookie expired — sent wake-up email, aborting fire")
-        return "cookie expired — emailed user"
+        self.log(inst, "cookie expired — recorded locally; next scheduled fire will probe again")
+        return "cookie expired — recorded locally"
 
     # ----- top-level entry called by canvas_cron.py fire -----
     def run(self, inst: CronInstance, dry_run: bool = False, force: bool = False) -> int:
@@ -418,8 +372,8 @@ class ActionTemplate(abc.ABC):
             self._dry_run_active = False
 
 
-class EmailTemplate(ActionTemplate):
-    """Email-only kind. No agent subprocess. Concrete subclasses override
+class LocalTemplate(ActionTemplate):
+    """Local-report kind. No agent subprocess. Concrete subclasses override
     pre_run / classify / act_dry / act_real."""
     pass
 
@@ -598,7 +552,7 @@ class AutonomousTemplate(CodexTemplate):
                 out[t["id"]] = "error"
         return out
 
-    def email_failure(self, inst: CronInstance, item: dict, ledger: dict,
+    def log_failure(self, inst: CronInstance, item: dict, ledger: dict,
                       post_state: str, codex_log: Path, body_extras: str = "") -> None:
         pause_n = inst.params.get("pause_after_n_failures", 3)
         key = f"{item['course_id']}:{item['id']}:cron_failure"
@@ -632,8 +586,8 @@ class AutonomousTemplate(CodexTemplate):
             f"  Codex log:  {codex_log}\n"
             f"{body_extras}{tail}"
         )
-        ok = self.send_email(subject, body, inst.recipient, inst=inst)
-        self.log(inst, f"  failure email N={n} -> {'OK' if ok else 'FAILED'}: {item['name']}")
+        ok = self.log_notice(subject, body, inst=inst)
+        self.log(inst, f"  local failure N={n} -> {'OK' if ok else 'FAILED'}: {item['name']}")
         if ok:
             ledger[key] = {
                 "course_name": item.get("course_name"),
@@ -673,10 +627,10 @@ class AutonomousTemplate(CodexTemplate):
         subject = f"[{inst.name} cron heartbeat] {sunday_iso} — still alive"
         body = self.heartbeat_body(inst, classification)
         if dry_run:
-            self.log(inst, f"  [dry-run] would send heartbeat: subj={subject!r}")
+            self.log(inst, f"  [dry-run] would log heartbeat: subj={subject!r}")
             return
-        ok = self.send_email(subject, body, inst.recipient, inst=inst)
-        self.log(inst, f"  heartbeat email -> {'OK' if ok else 'FAILED'}")
+        ok = self.log_notice(subject, body, inst=inst)
+        self.log(inst, f"  local heartbeat -> {'OK' if ok else 'FAILED'}")
         if ok:
             hp.write_text(json.dumps({
                 "last_sunday": sunday_iso,

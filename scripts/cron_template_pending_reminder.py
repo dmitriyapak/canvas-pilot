@@ -1,62 +1,39 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""canvas-cron template: `email_pending_reminder` (kind=email)
-
-Generic reminder template. For a given course_id, lists Canvas assignments that
-are still unsubmitted AND due within `threshold_days`, sends one summary email
-to `recipient`. Dedup: ledger key `<course_id>:<assignment_id>:reminder:<YYYY-MM-DD>`
-ensures at most one alert per assignment per calendar day, even if the cron
-fires multiple times.
-
-No CC subprocess. No Canvas state changes. ~5 seconds per run.
-
-This template is COURSE-AGNOSTIC. The user creates instances bound to
-specific courses via the canvas-cron skill (which writes to
-_private/cron_instances.yaml). To add a new course's reminder, just create
-another instance — don't write a new template.
-"""
+"""Read-only pending-assignment summary saved in the local scheduler log."""
 from __future__ import annotations
 
 import datetime as dt
-import time
 from typing import Optional
 
 from scripts.cron_base import (
-    PT, EmailTemplate, CronInstance, ParamSpec, TemplateSpec,
+    PT, LocalTemplate, CronInstance, ParamSpec, TemplateSpec,
     _parse_iso, course_name_for, load_courses_yaml,
 )
 
 ALL_COURSES_SENTINEL = "all"
-EMAIL_INTERVAL_S = 60  # seconds between repeat sends in act_real
 
 
 SPEC = TemplateSpec(
-    name="email_pending_reminder",
-    kind="email",
-    description="Email a summary of pending assignments due within N days (no auto-submit).",
+    name="pending_reminder",
+    kind="local",
+    description="Log a summary of pending assignments due within N days (no auto-submit).",
     param_schema=[
         ParamSpec(
             key="threshold_days", type="int", default=3,
-            prompt="Email if any assignment is due within how many days?",
-            description="A summary email is sent only if there's at least one "
+            prompt="Summarize if any assignment is due within how many days?",
+            description="A local summary is written only if there's at least one "
                         "unsubmitted assignment with due_at < now + threshold_days.",
         ),
-        ParamSpec(
-            key="email_count", type="int", default=1,
-            prompt="Send how many copies per cron fire (spaced 60s apart)?",
-            description="Repeat the same summary email N times within one fire, "
-                        "60s apart. Set to 2 if you sometimes miss a single "
-                        "alert. Set to 1 for normal behavior.",
-        ),
     ],
-    execution_time_limit="PT15M",  # accommodates email_count up to ~10 with 60s spacing
+    execution_time_limit="PT15M",
 )
 
 
-class EmailPendingReminder(EmailTemplate):
-    """Generic email pending reminder."""
+class PendingReminder(LocalTemplate):
+    """Generic local pending-assignment summary."""
 
     def pre_run(self, inst: CronInstance, dry_run: bool) -> Optional[str]:
-        # No tz window — email reminders are cheap and time-agnostic
+        # Local summaries are time-agnostic
         return None
 
     def _target_courses(self, inst: CronInstance) -> list[tuple[str, str]]:
@@ -159,55 +136,21 @@ class EmailPendingReminder(EmailTemplate):
         return subject, "\n".join(lines)
 
     def act_dry(self, inst: CronInstance, classification: dict) -> dict:
-        total = classification.get("total_pending", 0)
-        subject, _body = self._format_body(inst, classification)
-        email_count = int(inst.params.get("email_count", 1))
-        self.log(inst, f"  [dry-run] would send {email_count} email(s) of: "
-                       f"{subject}  ({total} item(s) across "
-                       f"{len(classification.get('by_course') or {})} course(s))")
-        return {"would_email": True, "n_pending": total, "email_count": email_count}
+        total=classification.get("total_pending",0)
+        self.log(inst,f"[dry-run] would record local summary for {total} pending items")
+        return {"would_log":True,"n_pending":total}
 
     def act_real(self, inst: CronInstance, classification: dict) -> dict:
-        ledger = self.load_ledger(inst)
-        total = classification.get("total_pending", 0)
-        if total == 0:
-            self.log(inst, "no pending in window — silent skip (no email)")
-            self.save_ledger_atomic(inst, ledger)
-            return {"emailed": False, "n_pending": 0}
-        # Dedup: collect all (course_id, assignment_id) pairs not already alerted today
-        today_iso = dt.datetime.now(PT).date().isoformat()
-        fresh_keys: list[str] = []
-        for cid, cdata in (classification.get("by_course") or {}).items():
-            for p in cdata.get("pending") or []:
-                key = f"{cid}:{p['id']}:reminder:{today_iso}"
-                if key in ledger:
-                    continue
-                fresh_keys.append(key)
-        if not fresh_keys:
-            self.log(inst, f"all {total} pending items already alerted today — skip")
-            self.save_ledger_atomic(inst, ledger)
-            return {"emailed": False, "n_pending": total, "n_fresh": 0}
-        subject, body = self._format_body(inst, classification)
-        email_count = max(1, int(inst.params.get("email_count", 1)))
-        ok_first = False
-        for i in range(email_count):
-            ok = self.send_email(subject, body, inst.recipient, inst=inst)
-            self.log(inst, f"  reminder email {i+1}/{email_count} -> "
-                           f"{'OK' if ok else 'FAILED'}: "
-                           f"{len(fresh_keys)}/{total} fresh")
-            if i == 0 and ok:
-                ok_first = True
-            if i < email_count - 1:
-                time.sleep(EMAIL_INTERVAL_S)
-        if ok_first:
-            now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
-            for key in fresh_keys:
-                ledger[key] = {"alerted_at": now_iso}
-            self.save_ledger_atomic(inst, ledger)
-        return {
-            "emailed": ok_first, "n_pending": total,
-            "n_fresh": len(fresh_keys), "email_count": email_count,
-        }
+        ledger=self.load_ledger(inst)
+        day=dt.datetime.now(PT).date().isoformat()
+        key="local-summary:"+day
+        if key in ledger:
+            return {"logged":False,"n_pending":classification.get("total_pending",0)}
+        subject,body=self._format_body(inst,classification)
+        self.log_notice(subject,body,inst=inst)
+        ledger[key]={"logged_at":dt.datetime.now(dt.timezone.utc).isoformat()}
+        self.save_ledger_atomic(inst,ledger)
+        return {"logged":True,"n_pending":classification.get("total_pending",0)}
 
 
-template = EmailPendingReminder(SPEC)
+template = PendingReminder(SPEC)

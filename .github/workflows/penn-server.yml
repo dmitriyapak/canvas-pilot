@@ -10,5 +10,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install -r requirements-server.txt pytest pytest-asyncio
+      - run: pip install -r requirements-server.txt pytest pytest-asyncio PyYAML
       - run: python -m pytest tests/penn_server -q

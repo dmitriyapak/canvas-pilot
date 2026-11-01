@@ -11,7 +11,7 @@ from .vault import Vault
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("action", choices=["init", "gmail", "pennkey"])
+    p.add_argument("action", choices=["init", "pennkey"])
     p.add_argument("--key-file", type=Path, required=True)
     p.add_argument("--owner-file", type=Path)
     p.add_argument("--state-dir", type=Path, default=Path("/data"))
@@ -35,17 +35,11 @@ def main():
                 f.write(value)
         return
     vault = Vault(args.state_dir, args.key_file)
-    if args.action == "gmail":
-        password = getpass.getpass("Gmail app password: ").replace(" ", "")
-        if not password:
-            p.error("Empty app password")
-        vault.write("gmail", {"app_password": password})
-    else:
-        username = input("PennKey username: ").strip()
-        password = getpass.getpass("PennKey password: ")
-        if not username or not password:
-            p.error("Empty credentials")
-        vault.write("pennkey", {"username": username, "password": password})
+    username = input("PennKey username: ").strip()
+    password = getpass.getpass("PennKey password: ")
+    if not username or not password:
+        p.error("Empty credentials")
+    vault.write("pennkey", {"username": username, "password": password})
 
 
 if __name__ == "__main__":

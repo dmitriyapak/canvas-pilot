@@ -15,7 +15,8 @@ from starlette.routing import Mount, Route
 
 from .browser import Browser
 from .config import Settings
-from .notifications import Notifier
+from .maintenance import Maintenance
+from .migrations import remove_retired_alert_state
 from .oauth import OAuth, digest
 from .schedule import ReadOnlySchedule
 from .session import SessionManager, SessionUnavailable
@@ -252,10 +253,8 @@ def create_app(settings=None, browser=None):
     settings = settings or Settings.from_env()
     vault = Vault(settings.state_dir, settings.key_file)
     oauth = OAuth(settings, vault)
-    notifier = Notifier(vault, settings.email)
-    production_browser = browser is None
     browser = browser or Browser(settings, vault)
-    session = SessionManager(browser, vault, notifier)
+    session = SessionManager(browser, vault)
     tools = CanvasTools(browser, session, settings, vault)
     mcp = FastMCP(
         "Penn Canvas Pilot",
@@ -271,35 +270,19 @@ def create_app(settings=None, browser=None):
     )
     tools.register(mcp)
     viewer = LoginViewer(settings, vault, oauth, tools)
-    schedule = ReadOnlySchedule(tools, notifier, vault)
+    schedule = ReadOnlySchedule(tools, vault)
+
+    supervisor = Maintenance(tools, session, schedule, settings.heartbeat_seconds)
 
     async def maintenance():
-        heartbeat_at = 0
         while True:
-            if time.monotonic() >= heartbeat_at:
-                try:
-                    async with tools.lock:
-                        await session.heartbeat()
-                    if session.status().get("phase") == "healthy":
-                        await schedule.tick()
-                except Exception:
-                    # Keep email delivery alive on browser/network failure; redact detail.
-                    notifier.queue(
-                        "maintenance-failure-" + str(int(time.time() // 86400)),
-                        "Penn Canvas service needs attention",
-                        "The session maintenance task failed. Review sanitized server health and recover through the authenticated login page.",
-                    )
-                heartbeat_at = time.monotonic() + settings.heartbeat_seconds
-            await notifier.flush()
-            await asyncio.sleep(15)
+            await supervisor.tick()
+            await asyncio.sleep(5)
 
     @asynccontextmanager
     async def lifespan(app):
         with vault.exclusive_process():
-            if production_browser and not vault.read("gmail", {}).get("app_password"):
-                raise RuntimeError(
-                    "Provision the encrypted Gmail app password before starting the server"
-                )
+            remove_retired_alert_state(vault)
             await browser.start()
             async with mcp.session_manager.run():
                 task = asyncio.create_task(maintenance())
@@ -310,7 +293,15 @@ def create_app(settings=None, browser=None):
                     with suppress(asyncio.CancelledError):
                         await task
                     async with tools.lock:
-                        await browser.close()
+                        try:
+                            await asyncio.wait_for(browser.close(), timeout=20)
+                        except Exception as error:
+                            import logging
+
+                            logging.getLogger("penn.maintenance").error(
+                                "browser_shutdown_failed error_type=%s",
+                                type(error).__name__,
+                            )
 
     async def health(request):
         return JSONResponse({"status": "running"})

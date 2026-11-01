@@ -1,4 +1,4 @@
-"""Offline tests only: no Canvas, Penn, SMTP, or real browser connections."""
+"""Offline tests only: no Canvas, Penn, or real browser connections."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -9,7 +9,6 @@ from starlette.testclient import TestClient
 
 from src.penn_server.app import create_app
 from src.penn_server.config import Settings
-from src.penn_server.notifications import Notifier
 from src.penn_server.oauth import challenge
 from src.penn_server.session import SessionManager, SessionUnavailable
 from src.penn_server.tools import TOOLS, CanvasTools
@@ -77,7 +76,7 @@ async def test_second_401_recovers_without_interaction(setup):
     _, vault = setup
     browser = fake_browser()
     browser.probe.side_effect = [401, 401, 200]
-    manager = SessionManager(browser, vault, Notifier(vault, "self@example.test"))
+    manager = SessionManager(browser, vault)
     await manager.ensure()
     assert browser.probe.await_count == 3
     assert browser.relogin.await_count == 1
@@ -90,14 +89,13 @@ async def test_one_login_attempt_per_incident_across_restart(setup):
     browser = fake_browser()
     browser.probe.return_value = 401
     browser.relogin.return_value = "mfa_required"
-    notifier = Notifier(vault, "self@example.test")
     for _ in range(3):
-        manager = SessionManager(browser, vault, notifier)
+        manager = SessionManager(browser, vault)
         with pytest.raises(SessionUnavailable):
             await manager.ensure()
     assert browser.relogin.await_count == 1
     assert manager.status()["push_reserved"] is True
-    assert len(vault.read("outbox")) == 2
+    assert vault.read("outbox") is None
 
 
 @pytest.mark.asyncio
@@ -110,7 +108,7 @@ async def test_crash_reservation_never_repeats_login(setup):
         {"incident": "existing", "phase": "recovering", "push_reserved": True},
     )
     with pytest.raises(SessionUnavailable):
-        await SessionManager(browser, vault, Notifier(vault, "x@example.test")).ensure()
+        await SessionManager(browser, vault).ensure()
     browser.relogin.assert_not_awaited()
 
 
@@ -120,7 +118,7 @@ async def test_network_failure_does_not_trigger_login(setup):
     browser = fake_browser()
     browser.probe.return_value = 503
     with pytest.raises(SessionUnavailable):
-        await SessionManager(browser, vault, Notifier(vault, "x@example.test")).ensure()
+        await SessionManager(browser, vault).ensure()
     browser.relogin.assert_not_awaited()
 
 
@@ -430,28 +428,6 @@ def test_grade_scenarios_weighting_drops_and_excused():
 
 
 @pytest.mark.asyncio
-async def test_notification_dedup_and_delivery_retry(setup, monkeypatch):
-    settings, vault = setup
-    notifier = Notifier(vault, settings.email)
-    notifier.queue("incident", "Subject", "No credentials")
-    notifier.queue("incident", "Changed", "Should not replace")
-    assert len(vault.read("outbox")) == 1
-
-    def fail(*args):
-        raise RuntimeError("simulated SMTP failure")
-
-    monkeypatch.setattr(notifier, "_send", fail)
-    await notifier.flush()
-    entry = vault.read("outbox")["incident"]
-    assert entry["attempts"] == 1 and not entry["sent"]
-    monkeypatch.setattr(notifier, "_send", lambda *args: None)
-    with vault.transaction("outbox") as outbox:
-        outbox["incident"]["next_at"] = 0
-    await notifier.flush()
-    assert vault.read("outbox")["incident"]["sent"] is True
-
-
-@pytest.mark.asyncio
 async def test_daily_scan_schedule_deduplicates_after_restart(setup):
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -460,12 +436,11 @@ async def test_daily_scan_schedule_deduplicates_after_restart(setup):
 
     settings, vault = setup
     tools = SimpleNamespace(scan=AsyncMock(return_value={"courses": []}))
-    notifier = Notifier(vault, settings.email)
     now = datetime(2026, 11, 1, 9, 5, tzinfo=ZoneInfo("America/New_York"))
-    await ReadOnlySchedule(tools, notifier, vault).tick(now)
-    await ReadOnlySchedule(tools, notifier, vault).tick(now)
+    await ReadOnlySchedule(tools, vault).tick(now)
+    await ReadOnlySchedule(tools, vault).tick(now)
     assert tools.scan.await_count == 1
-    assert len(vault.read("outbox")) == 1
+    assert vault.read("schedule")["last_scan_day"] == "2026-11-01"
 
 
 @pytest.mark.asyncio
@@ -671,3 +646,84 @@ async def test_password_capture_requires_verified_https_origin(setup):
         {"frame": SimpleNamespace(url="https://login.upenn.example")}, value
     )
     assert vault.read("pennkey_pending") == value
+
+
+@pytest.mark.asyncio
+async def test_supervisor_recovers_transient_failures_and_restarts_persistent_crash():
+    import asyncio
+    from unittest.mock import Mock
+    from src.penn_server.maintenance import Maintenance
+
+    tools = SimpleNamespace(lock=asyncio.Lock())
+    session = SimpleNamespace(
+        heartbeat=AsyncMock(
+            return_value=True, side_effect=RuntimeError("simulated-sensitive-detail")
+        ),
+        status=lambda: {"phase": "healthy"},
+    )
+    schedule = SimpleNamespace(tick=AsyncMock())
+    restart = Mock()
+    clock = Mock(return_value=0)
+    supervisor = Maintenance(
+        tools, session, schedule, 720, restart=restart, clock=clock
+    )
+    await supervisor.tick()
+    clock.return_value = 10
+    session.heartbeat.side_effect = None
+    await supervisor.tick()
+    assert supervisor.failures == 0
+    restart.assert_not_called()
+    session.heartbeat.side_effect = RuntimeError("simulated-sensitive-detail")
+    for now in (730, 740, 760):
+        clock.return_value = now
+        await supervisor.tick()
+    restart.assert_called_once()
+    schedule.tick.assert_awaited_once()
+
+
+def test_local_logs_are_bounded_private_and_redact_exception_text(tmp_path):
+    import logging
+    from src.penn_server.local_logs import configure
+    from src.penn_server.maintenance import log
+
+    configure(tmp_path / "logs")
+    try:
+        log.error("maintenance_failed error_type=%s", "RuntimeError")
+        text = (tmp_path / "logs/server.log").read_text()
+        assert "maintenance_failed error_type=RuntimeError" in text
+        assert (tmp_path / "logs/server.log").stat().st_mode & 0o077 == 0
+    finally:
+        logger = logging.getLogger("penn")
+        for handler in logger.handlers[:]:
+            handler.close()
+            logger.removeHandler(handler)
+        logger.propagate = True
+
+
+def test_no_mail_transport_credentials_or_startup_requirement():
+    import inspect
+    import src.penn_server.app as app
+    import src.penn_server.provision as provision
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    assert not (root / "src/penn_server/notifications.py").exists()
+    assert not (root / "src/gws_email.py").exists()
+    assert "gmail" not in inspect.getsource(app)
+    assert "gmail" not in inspect.getsource(provision)
+    assert "PENN_GMAIL_ADDRESS" not in (root / "deploy/penn/compose.yaml").read_text()
+    assert "restart: always" in (root / "deploy/penn/compose.yaml").read_text()
+    assert "email" not in Settings.__dataclass_fields__
+
+
+def test_retired_alert_records_are_removed_without_touching_auth(setup):
+    from src.penn_server.migrations import remove_retired_alert_state
+
+    _, vault = setup
+    for name in ("gmail", "outbox", "browser", "pennkey", "oauth", "session"):
+        vault.write(name, {"simulated": "value"})
+    remove_retired_alert_state(vault)
+    assert vault.read("gmail") is None
+    assert vault.read("outbox") is None
+    for name in ("browser", "pennkey", "oauth", "session"):
+        assert vault.read(name) == {"simulated": "value"}

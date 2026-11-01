@@ -21,15 +21,14 @@ resources (4 vCore/8 GB/75 GB). Use `/opt/canvas-pilot-penn` for the fork checko
    normal public CA trust. Ubuntu host and Debian container base are independent.
 2. Create `deploy/penn/state` and `deploy/penn/secrets`, mode 0700, owned by UID
    10001 (the container user). Copy `env.example` to `.env` and fill in the dedicated
-   sslip.io HTTPS origin, random prefix, Gmail sender/recipient and verified exact callback/login hosts.
+   sslip.io HTTPS origin, random prefix and verified exact callback/login hosts.
 3. Provision through a private interactive SSH terminal using
    `python -m src.penn_server.provision init --key-file <key-path> --owner-file <owner-path>`.
    The command refuses to overwrite secrets. Run with server dependencies available.
    Secrets must be readable by UID 10001 only. Never put passwords in shell arguments.
-4. Provision Gmail with `python -m src.penn_server.provision gmail --key-file <key-path>
-   --state-dir <state-path>`. Hidden input is encrypted immediately. Optionally
-   provision PennKey the same way with the `pennkey` action; otherwise capture it
-   during initial server-browser login. This does not eliminate Penn-required MFA.
+4. Optionally provision PennKey using the `pennkey` action and the same key/state
+   paths; otherwise capture it during initial server-browser login. Credentials
+   stay encrypted on the server. No alert account or mail credentials are used.
 5. Create `penn_proxy`; persistently attach the existing Caddy service to it in its
    Compose configuration. Add only the new site from `Caddyfile.example`, validate
    Caddy's configuration, then reload. Caddy reaches `penn:8000`; publish no port.
@@ -47,18 +46,29 @@ resources (4 vCore/8 GB/75 GB). Use `/opt/canvas-pilot-penn` for the fork checko
 
 ## Recovery and security
 
-A read-only daily scan/reminder runs after 09:00 America/New_York within the
+A read-only daily scan runs after 09:00 America/New_York within the
 server maintenance loop; clients can also invoke `scan_canvas` directly. It
 never launches a model worker or submits coursework.
 
-Heartbeat probes `/users/self` every 12 minutes, retries one 401, queues email and
-recovers automatically. Restore full browser/SSO/Duo state before falling back to
+Heartbeat probes `/users/self` every 12 minutes, retries one 401 and recovers automatically. Restore full browser/SSO/Duo state before falling back to
 stored PennKey credentials. A durable reservation precedes login navigation,
 because Duo may initiate a push automatically. One recovery navigation is allowed
 per incident; no resend/retry button is clicked. A crash after reservation can
 require manual recovery rather than risk a second push. Manual actions remain
 visible and controlled by the owner. Browser trust is Penn-controlled; expiry or
 policy resets may require Duo sooner than 60 days.
+
+Docker uses `restart: always`. A disconnected/closed Chromium is restored from
+its encrypted checkpoint automatically. The in-process supervisor retries
+unexpected maintenance failures with bounded backoff; three consecutive failures
+request a graceful process restart. Startup failures are also restarted by Docker.
+Ordinary Canvas outages and pending MFA do not cause crash loops or more pushes.
+
+Failures go only to bounded local logs: `/data/logs/server.log` in the container,
+`deploy/penn/state/logs/server.log` on the host, plus local Docker process logs.
+Log messages omit credentials, cookies and exception text. There are no external
+alerts or mail transport. The previous server's retired alert records are deleted
+on startup without touching browser state, PennKey credentials, OAuth or keys.
 
 Profile files are decrypted on tmpfs only. Closed-profile checkpoints and session
 cookies are encrypted atomically; the key is mounted separately. Browser version
@@ -71,7 +81,7 @@ keys separately from encrypted backups. Never run two replicas over one volume.
 
 ## Validation and honest sign-off
 
-Offline tests use simulated browser/Canvas/SMTP responses. Real-course checks
+Offline tests use simulated browser/Canvas responses. Real-course checks
 must be reads only, with `PENN_TESTING_READ_ONLY=true` retained in Compose. Do not
 start quizzes, submit assignments, send messages, mark read/done, post reviews,
 or modify calendar/planner state. Do not enable writes to test write handlers.

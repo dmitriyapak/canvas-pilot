@@ -10,7 +10,7 @@ This skill is the user-facing control plane for `scripts/canvas_cron.py` and
 the discovered `scripts/cron_template_*.py` templates. Never ask the user to
 edit `_private/cron_instances.yaml` or Task Scheduler directly.
 
-Course names, IDs, instance names, and recipients are private runtime values.
+Course names, IDs and instance names are private runtime values.
 Do not copy them into this skill, tracked documentation, examples, or public
 output.
 
@@ -57,12 +57,11 @@ results. Template kinds have different authority:
 
 - `scan`: starts a fresh Codex session that runs `canvas-scan` and stops at the
   approval boundary. It has no Canvas mutation receipt.
-- `email`: reads Canvas and sends a reminder email. It has no Canvas mutation
-  receipt, but creating the outbound-email schedule still requires the user's
-  approval.
+- `local`: reads Canvas and records a due-item summary in the local log.
+
 Scheduled assignment/quiz submission is removed. Never install a schedule that
 mutates Canvas. The scan template may use `all` to build the daily snapshot.
-For the Penn server, use its built-in read-only daily scan/reminder schedule;
+For the Penn server, use its built-in read-only daily scan schedule;
 clients invoke tools directly and no separate Codex worker is deployed.
 
 ## 3. Choose schedule and parameters
@@ -73,11 +72,10 @@ Collect:
 2. local Pacific time (`HH:MM`, 24-hour format);
 3. start date (`YYYY-MM-DD`);
 4. every parameter in the selected template's live `param_schema`;
-5. recipient when the template sends email or failure alerts;
-6. a safe instance name matching `^[A-Za-z0-9_]+$`.
+5. a safe instance name matching `^[A-Za-z0-9_]+$`.
 
 Show the complete proposed instance before creating it: template, private
-course/scope label, schedule, parameters, recipient behavior, and whether it
+course/scope label, schedule, parameters and whether it
 can mutate Canvas.
 
 ## 4. Read-only schedule boundary
@@ -90,7 +88,7 @@ must remain disabled; their implementation has been removed.
 Run:
 
 ```powershell
-python scripts/canvas_cron.py create <instance> --template <template> --course <course_id> --days <N> --time <HH:MM> --start <YYYY-MM-DD> --param key=value --recipient <recipient>
+python scripts/canvas_cron.py create <instance> --template <template> --course <course_id> --days <N> --time <HH:MM> --start <YYYY-MM-DD> --param key=value
 ```
 
 Success requires both:
@@ -115,7 +113,7 @@ commands. `--dry-run` and `--os-trigger` are mutually exclusive.
 
 ## 7. Optional OS-chain proof and enable
 
-An OS-trigger test is a real scan/reminder trigger. It may send email but must
+An OS-trigger test is a real scan/reminder trigger. It records results locally and must
 never mutate Canvas. Run only within the approved schedule scope:
 
 ```powershell

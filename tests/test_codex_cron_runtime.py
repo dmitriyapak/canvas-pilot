@@ -185,8 +185,8 @@ def test_dry_run_does_not_launch_codex_or_mutate_scheduler(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         template,
-        "send_email",
-        lambda *_args, **_kwargs: pytest.fail("dry-run must not send email"),
+        "log_notice",
+        lambda *_args, **_kwargs: pytest.fail("dry-run must not write a notice"),
     )
     monkeypatch.setattr(
         canvas_cron,

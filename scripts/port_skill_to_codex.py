@@ -33,6 +33,7 @@ HOMEWORK_SKILLS = [
     "canvas-inside",
     "canvas-zybooks",
     "canvas-essay",
+    "canvas-awkward-syntax",
     "canvas-reading-annotation",
     "canvas-generic",
 ]

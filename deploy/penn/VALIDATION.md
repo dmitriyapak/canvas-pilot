@@ -9,8 +9,9 @@
   complete profile/cookie/PennKey state and separate master-key storage.
 - Twelve-minute heartbeat, automatic recovery and durable one-login-attempt
   reservation per incident, including across restarts. No automatic push resends.
-- Encrypted Gmail app password provisioning and deduplicated retrying email outbox.
-- Server-side read-only daily scans/reminders; no separate model worker.
+- Local-only bounded logs; no mail transport, alert credentials or mail startup requirement.
+- Docker restart=always and supervised recovery from persistent maintenance crashes.
+- Server-side read-only daily scans; no separate model worker.
 - Write guards below dispatch and at browser/upload boundaries. Testing Compose
   forces read-only mode. Write handlers are live-untested.
 - Removal of humanizer, quiz pacing/focus/intentional misses, synthetic quiz-event
@@ -19,18 +20,21 @@
 
 ## Local evidence
 
-- 29 Penn-server offline tests pass: auth, protocol-level MCP calls, encrypted
+- 34 Penn-server offline tests pass: auth, protocol-level MCP calls, encrypted
   storage, recovery/restart reservations, write blocks, mock write encoding,
-  confirmation replay, uncertain outcomes, email retries, scheduling and downloads.
+  confirmation replay, uncertain outcomes, local logging, supervised restart, scheduling and downloads.
 - Regression suite excluding the pre-existing uncollectable guard-kernel module:
-  410 passed, 1 skipped. The guard-kernel module imports missing
+  433 passed, 1 skipped. The guard-kernel module imports missing
   `scripts/push_public_snapshot.py`, absent from the original commit.
 - Codex runtime fixture suite and plugin drift checks pass.
 - Docker image builds, including Chromium downloads and native dependencies.
 - Chromium smoke test passes as non-root in a read-only container with network
   disabled: synthetic session cookies and the full profile survive encrypted
   checkpoint/restart. No Penn traffic is involved.
+- Real server startup/health passes with networking disabled and no mail credentials.
 - Python correctness lint and `git diff --check` pass.
+- Exact scope restorations are recorded in `RESTORATIONS.md`; restored course,
+  artifact, annotation, zyBooks and standalone syntax tests pass.
 
 The legacy automation/onboarding runners fail because CODEX_AUTOMATION.md and
 CODEX_ONBOARDING.md are absent. Two advanced-hook session-marker checks also
@@ -39,7 +43,7 @@ commit `6b79d5b`; they are not claimed as passing.
 
 ## Pending secure access and live read-only validation
 
-No OVH server changes, Penn requests, real Canvas writes or live emails were
+No OVH server changes, Penn requests or real Canvas writes were
 performed during local implementation. `/home/ubuntu/README.txt` must be updated
 before adding Penn resources to the VPS; the supplied section is a template,
 not a claim that the server file has already changed.
@@ -52,10 +56,9 @@ not a claim that the server file has already changed.
 | Grok Bot | Server endpoint implemented; client setup/compatibility unverified |
 | Codex | Server endpoint implemented; client setup/compatibility unverified |
 | PennKey/Duo | Generic adapter implemented; actual Penn selectors/trust behavior unverified |
-| Gmail SMTP | Encrypted provisioning/outbox implemented; actual delivery unverified |
 | Existing Columbia Caddy | Deployment adapter supplied; actual config/pattern not inspected |
 
-Next: securely provision SSH and Gmail credentials, inspect existing Caddy and
+Next: securely provision SSH access, inspect existing Caddy and
 Columbia sign-in, deploy to the dedicated sslip.io origin, verify Penn redirects
 and identity, exercise read tools and recovery, and configure the five clients.
 All real writes must stay blocked throughout this validation. Real Duo behavior,

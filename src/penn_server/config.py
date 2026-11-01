@@ -17,7 +17,6 @@ class Settings:
     owner_file: Path
     redirects: tuple[str, ...]
     canvas_origin: str = "https://penn.instructure.com"
-    email: str = "owner@example.invalid"
     heartbeat_seconds: int = 720
     testing_read_only: bool = True
     expected_user_id: str = ""
@@ -74,7 +73,6 @@ class Settings:
             redirects=tuple(
                 filter(None, os.getenv("PENN_OAUTH_REDIRECTS", "").split(","))
             ),
-            email=os.environ["PENN_GMAIL_ADDRESS"],
             heartbeat_seconds=int(os.getenv("PENN_HEARTBEAT_SECONDS", "720")),
             testing_read_only=os.getenv("PENN_TESTING_READ_ONLY", "true").lower()
             != "false",

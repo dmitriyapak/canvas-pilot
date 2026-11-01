@@ -3,7 +3,7 @@
 
 1. **Template registry**: discovers `scripts/cron_template_<name>.py` files at
    import time. Each must export a module-level `template = SomeTemplate(SPEC)`
-   instance (`SomeTemplate` subclasses `EmailTemplate` or `AutonomousTemplate`).
+   instance (`SomeTemplate` subclasses `LocalTemplate` or `AutonomousTemplate`).
    `cron_base.py` and `cron_registry.py` are framework — excluded from discovery.
 
 2. **Instance registry**: source of truth is `_private/cron_instances.yaml`.

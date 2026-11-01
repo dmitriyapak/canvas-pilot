@@ -14,7 +14,10 @@ def test_removed_helpers_and_scheduled_submit_are_absent():
         "scripts/cron_template_autonomous_submit_pending.py",
     ):
         assert not (root / relative).exists()
-    assert not list((root / "src").glob("humanizer_*.py"))
+    assert {p.name for p in (root / "src").glob("humanizer_*.py")} == {
+        "humanizer_segmentation.py",
+        "humanizer_segment_extract.py",
+    }
     for relative in (".agents/skills", ".claude/skills"):
         assert not list((root / relative).glob("canvas-humanizer*"))
 

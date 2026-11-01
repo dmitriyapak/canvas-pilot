@@ -113,10 +113,9 @@ class Browser:
     async def probe(self):
         # Recover a crashed Chromium from the encrypted checkpoint without
         # creating a new login incident or clearing its push reservation.
-        if (
-            self.context
-            and self.context.browser
-            and not self.context.browser.is_connected()
+        if self.context and (
+            (self.page and self.page.is_closed())
+            or (self.context.browser and not self.context.browser.is_connected())
         ):
             await self.pw.stop()
             await self.start()

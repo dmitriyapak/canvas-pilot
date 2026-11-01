@@ -4,7 +4,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/penn/Dockerfile
-    restart: unless-stopped
+    restart: always
     init: true
     read_only: true
     cap_drop: [ALL]
@@ -18,7 +18,6 @@ services:
       PENN_PREFIX: ${PENN_PREFIX:?Set random secret prefix}
       PENN_OAUTH_REDIRECTS: ${PENN_OAUTH_REDIRECTS:?Set exact client callback URLs}
       PENN_LOGIN_HOSTS: ${PENN_LOGIN_HOSTS:?Set verified PennKey login hostnames}
-      PENN_GMAIL_ADDRESS: ${PENN_GMAIL_ADDRESS:?Set Gmail sender and recipient}
       PENN_EXPECTED_USER_ID: ${PENN_EXPECTED_USER_ID:-}
       # Keep this true throughout testing. No real writes are authorized for tests.
       PENN_TESTING_READ_ONLY: 'true'

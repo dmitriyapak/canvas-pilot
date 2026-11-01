@@ -51,6 +51,15 @@ class Vault:
         finally:
             Path(tmp).unlink(missing_ok=True)
 
+    def delete(self, name):
+        path = self._path(name)
+        path.unlink(missing_ok=True)
+        descriptor = os.open(self.root, os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
     @contextmanager
     def transaction(self, name, default=None):
         with (self.root / (name + ".lock")).open("a") as lock:
