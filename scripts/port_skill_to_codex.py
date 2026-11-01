@@ -33,9 +33,12 @@ HOMEWORK_SKILLS = [
     "canvas-inside",
     "canvas-zybooks",
     "canvas-essay",
-    "canvas-awkward-syntax",
     "canvas-reading-annotation",
     "canvas-generic",
+    "canvas-humanizer",
+    "canvas-humanizer-loop",
+    "canvas-humanizer-surgical",
+    "canvas-awkward-syntax",
 ]
 
 DROP_KEYS = ("allowed-tools:", "tools:")
@@ -48,7 +51,7 @@ def port_note(name: str) -> str:
 >   Codex **ad-hoc parallel subagents** — spawn them in parallel with the inline role prompts as written,
 >   wait for all, collect results (verified working; `agents.max_threads` default 6, raise if you need more).
 > - **`pre-submit-reviewer`** = the predefined Codex subagent `.codex/agents/pre-submit-reviewer.toml`.
-> - **Cross-skill calls** ("via the Skill tool", hand off to `canvas-bootstrap`)
+> - **Cross-skill calls** ("via the Skill tool", invoke `canvas-humanizer`, hand off to `canvas-bootstrap`)
 >   = invoke the Codex skill of the same name under `.agents/skills/`.
 > - **Tool names** (Read/Write/Edit/Bash/Glob/Grep/WebFetch) = use Codex's equivalent native tools.
 > - **Hooks** named (PreToolUse/PostToolUse/Stop guards) are enforced by `.codex/hooks/`; see

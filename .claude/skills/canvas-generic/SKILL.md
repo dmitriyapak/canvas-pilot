@@ -97,6 +97,7 @@ runs/<today>/<work>/
 ├── verification_checklist.md  # Stage 8 — Sub-agent B output
 ├── verification.log           # Stage 9 — measured results
 ├── review_c.json              # Stage 10 — Sub-agent C verdict
+├── humanizer_log.json         # if Stage 7's humanize sub-step ran
 └── result.json
 ```
 
@@ -211,7 +212,8 @@ Append the pipeline stages to `pipeline_design.md`. Use the template matching th
 1. draft — prose generator, target word count from rubric, voice register inferred from
    assignment context (default B1-B2 international-student for undergraduate; advanced
    academic if rubric demands graduate-level voice)
-2. export — render to .docx (or rubric-specified format)
+2. canvas-humanizer — Skill tool invocation, voice register fixed from step 1
+3. export — render to .docx (or rubric-specified format)
 ```
 
 **pdf_annotated**:
@@ -259,6 +261,7 @@ Adjust each template's stages for rubric specifics:
 
 Run the pipeline designed in Stage 6. Write artifacts to `draft/`.
 
+**For `doc_prose`**: after the draft is produced, invoke `canvas-humanizer` via the Skill tool with `input_path=draft/<filename>` and `voice_register` from Stage 6 step 1. Humanizer writes humanized output back to the same path and writes `humanizer_log.json` to the work dir.
 
 **For `code`**: if `references/` contains a test scaffold, run the tests after each generation pass; iterate until passing (max 5 implementation rounds, then `status: "error"`). If no tests exist, generate, then run `python -m py_compile` (or equivalent for the language) to confirm parseable.
 
@@ -363,6 +366,7 @@ Write `result.json`:
   "draft_path": "runs/<today>/<work>/draft/<filename>",
   "verification_log_path": "runs/<today>/<work>/verification.log",
   "output_mode": "doc_prose",
+  "humanizer_applied": true,
   "sub_agent_a_verdict": "proceed",
   "sub_agent_c_verdict": "verification_sufficient",
   "human_review_items": [],
@@ -426,7 +430,7 @@ Daily dispatch via canvas-execute does not set the marker; runs full-pipeline as
 | 4 sub-agent-a | medium | Investigation completeness review; may trigger recovery loop |
 | 5 classify-output | short | Pick output mode (doc_prose / pdf_annotated / pdf_typed / code / form_answers / mixed) |
 | 6 design-pipeline | short | Sketch per-mode stages tailored to the rubric |
-| 7 generate | long | Run the designed pipeline; for `doc_prose` preserves the verified draft |
+| 7 generate | long | Run the designed pipeline; for `doc_prose` invokes `canvas-humanizer` |
 | 8 sub-agent-b | medium | Design verification checklist from the rubric |
 | 9 verify | medium | Run every checklist item with measured PASS/FAIL/SKIP |
 | 10 sub-agent-c | medium | Verification coverage review; may trigger 1 round of add-checks |

@@ -16,16 +16,14 @@ workflows and regression coverage. The server still has all 71 connector tools.
 - `src/humanizer_segmentation.py` and `src/humanizer_segment_extract.py`: shared
   sentence/paragraph segmentation and protected-span extraction required by that
   standalone workflow. These utility filenames are historical; restoring them
-  does not restore the removed humanizer engines or skill entry points.
+  supports the restored humanizer and standalone syntax workflows.
 - `scripts/port_skill_to_codex.py`: standalone syntax-skill conversion registration.
 - `.claude/skills/canvas-essay/SKILL.md`: the independent legacy essay workflow,
   including persona derivation, sample anchoring, specification parsing, drafting,
-  figures/citations, quality audits, calibration stages and export. Only the
-  explicitly removed humanizer stage remains excluded.
+  figures/citations, quality audits, calibration stages and export. The humanizer stage is now restored too.
 - `.claude/skills/canvas-generic/SKILL.md`: the independent legacy investigation,
   pipeline design, prose/PDF/annotation/code/form/mixed modes, generation,
-  independent verification, iteration, learning and export workflow. Its removed
-  humanizer call is not reinstated.
+  independent verification, iteration, learning and export workflow. Its humanizer handoff is restored too.
 - `.claude/skills/canvas-inside/SKILL.md`: the independent legacy quiz workflow,
   including classification, four-layer reading discovery, study notes, all answer
   shapes, independent arbitration, completion/readback, feedback-based retakes,
@@ -40,8 +38,7 @@ workflows and regression coverage. The server still has all 71 connector tools.
   standalone-syntax coverage: native skill contracts, stable directories,
   canonical result states, submission boundaries, shared helper APIs, local
   prose/document artifacts, PDF annotation verification, zyBooks graded-column
-  parsing, sentence locks and syntax-solver fixtures. Only assertions for the
-  explicitly removed humanizer engines/skills are excluded.
+  parsing, sentence locks and syntax-solver fixtures. All original humanizer skill/helper/scoring assertions are restored too.
 
 ## Newly requested mail removal
 
@@ -57,3 +54,14 @@ retired alert records are discarded on startup. Failures are logged locally;
 Docker restart=always, browser restoration, heartbeat, automatic re-login and
 bounded maintenance supervision provide recovery. The one-push-per-incident
 limit and real-Canvas-write testing block remain enforced.
+
+## Humanizer restoration requested subsequently
+
+Restored the complete `canvas-humanizer`, `canvas-humanizer-loop`, and
+`canvas-humanizer-surgical` skills in both `.agents/skills/` and `.claude/skills/`,
+plus `src/humanizer_apply_winners.py`, `src/humanizer_score.py`, and
+`src/humanizer_select.py`. Restored the original essay/generic humanizer handoffs
+in both skill trees, the converter registrations, and the complete original
+`tests/test_course_humanizer_skill_parity.py` suite. These paths now match the
+original repository. Quiz-interaction tricks, scheduled auto-submit and email
+alerts remain excluded.

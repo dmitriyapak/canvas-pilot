@@ -20,7 +20,8 @@ def test_legacy_workflows_keep_their_independent_implementation():
     for name in ("canvas-generic", "canvas-essay", "canvas-inside"):
         text = (ROOT / ".claude/skills" / name / "SKILL.md").read_text()
         assert "post_quiz_events(" not in text
-        assert "`canvas-humanizer`" not in text
+        if name == "canvas-inside":
+            assert "`canvas-humanizer`" not in text
 
 
 def test_pending_summary_is_local_and_legacy_instances_migrate():

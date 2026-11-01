@@ -47,9 +47,9 @@ Encrypted browser/PennKey state, heartbeat and automatic recovery minimize login
 Docker restarts persistent failures automatically. Diagnostics stay in bounded
 local logs; no mail transport or alert credentials are used.
 All real Canvas writes remain blocked during testing; write tools are live-untested.
-The text humanizer, synthetic quiz pacing/focus/intentional misses, and scheduled
-auto-submit have been removed. Existing drafting and authorized interactive
-submission workflows remain available.
+Humanizer workflows and their essay/generic integrations are preserved. Synthetic
+quiz pacing/focus/intentional misses and scheduled auto-submit remain removed.
+Existing drafting and authorized interactive submission workflows remain available.
 
 
 ## Workflow

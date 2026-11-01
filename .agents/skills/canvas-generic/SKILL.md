@@ -174,7 +174,7 @@ Turn every rubric line into a generation requirement. Preserve exact numeric,
 format, notation, citation, filename, and source constraints.
 
 - `doc_prose`: outline, draft section by section, verify sources, then invoke
-  ordinary draft review only when the caller requested that pass. Keep the
+  `canvas-humanizer` only when the caller requested that pass. Keep the
   pre-humanized draft for comparison.
 - `pdf_annotated`: clone the source PDF, annotate in place, and preserve page
   count. Follow any color and note-density rubric exactly.

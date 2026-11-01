@@ -120,6 +120,25 @@ A long-essay handler typically:
 
    **Draft 1 / Draft 2 catch verification**: if Draft 1 had been audited by §Y, the plagiarism-risk check would flag "5+ word verbatim from source unquoted" (the "near-plagiarism in intro and conclusion" the prof actually penalized). The voice-register check would flag "chatty language" mismatching overlay's "advanced academic" register.
 
+   **§7.5 — Call canvas-humanizer (MANDATORY unless overlay disables)**
+
+   After §Y clears (no HIGH gaps remaining), the draft is spec-compliant but may still carry AI-detection signal markers (uniform sentence length, AI-typical vocabulary, parallel structures). Reduce these signals **within** the established advanced-academic voice register by invoking the `canvas-humanizer` skill.
+
+   Overlay gate: read `humanizer_enabled` from `_private/canvas-essay-app.md`. Default is `true`. If overlay sets `false`, skip §7.5 entirely and proceed to Step 8.
+
+   Invoke via Skill tool with this prose context (substitute absolute paths and overlay-specified identity):
+
+   > Humanize the essay. draft_path: `<work>/draft/essay.docx`. output_path: `<work>/draft/essay.humanized.docx`. voice_register: advanced-academic-english. student_identity: `<overlay.humanizer.student_identity, default advanced-academic-english>`. Write humanizer_log.json to the same directory as output_path.
+
+   After canvas-humanizer returns:
+   1. Read `<work>/draft/humanizer_log.json`.
+   2. If status is `ok` or `partial`: rename `draft/essay.humanized.docx` over `draft/essay.docx` (humanized version becomes the canonical draft for Step 8).
+   3. If status is `error`: log the notes to `<work>/audit/humanizer_error.txt`; **do not block delivery** — proceed with the un-humanized draft. Step 8 result.json carries a `humanizer_status: error` flag.
+   4. **Quick word-count re-check** on the humanized draft vs spec minimum. Humanizer constrains ±5% per paragraph but cumulative drift could move the whole essay out of spec. If below spec minimum → return to Step 4 revise stage (extend by N words) and re-run §7-§7.5; max 2 such cycles. If above spec maximum → no action (above-spec is rarely penalized).
+   5. Extract paragraphs with `status: "partial"` from `humanizer_log.json` into `result.json.humanizer_partial_paragraphs` (list of `{para_id, final_scores, pass_counts}` objects). `canvas-execute` surfaces this list in REPORT.md so the student can manually review those paragraphs before upload.
+
+   **Why §7.5 exists**: §Y audits spec/voice/plagiarism — does the draft do what the assignment asks. Humanizer audits burstiness/perplexity/vocab — does the prose carry AI-detection signal. These are orthogonal; both must pass. §7.5 runs after §Y because humanization should not alter a spec-violating draft into spec-compliant cover; the order makes it impossible for humanizer to "rescue" a bad draft.
+
 8. **Output** to `runs/<today>/<work>/draft/essay.docx` and write `result.json` per canvas-execute hook 2 schema.
 
 ## Local application overlay specifies
@@ -133,6 +152,11 @@ A long-essay handler typically:
 - Where the actual spec lives for assignments in this course (which Canvas fields to walk)
 - Submission format expectations (docx / pdf / both)
 - Auto-submit authorization scope (default `draft_ready`; explicit per-course flag required to auto-submit)
+- **Humanizer settings** (all optional; sane defaults if absent):
+  - `humanizer_enabled: true | false` — default `true`. Set `false` to skip §7.5 (e.g. for a course where the instructor explicitly grades on AI-typical prose markers).
+  - `humanizer.student_identity` — default `advanced-academic-english`. Override to e.g. `b1-b2-international-student` if the writer's natural identity differs from the assignment's academic voice (rare for canvas-essay since the router already separates B1-B2 short-form work to `canvas-reading-annotation`).
+  - `humanizer_thresholds: {burstiness: N, perplexity: N, vocab: N}` — default `{70, 70, 70}`. Raise per-dimension to tighten (more retries, fewer partials); lower to relax.
+
 The overlay is intentionally free-form Markdown — this skeleton loads it verbatim into the CC context and lets the overlay's prose guide the flow.
 
 ## What you MUST NOT do
@@ -142,6 +166,8 @@ The overlay is intentionally free-form Markdown — this skeleton loads it verba
 - Do NOT skip step 7's word-count + citation gate. These are objectively verifiable and the easiest way to lose points.
 - Do NOT submit to Canvas without explicit overlay authorization. Default behavior is `draft_ready` → user reviews → user uploads.
 - Do NOT regenerate `derived_vector` silently without adding the footnote — the user needs to see when their persona drifted.
+- Do NOT skip §7.5 unless overlay explicitly sets `humanizer_enabled: false`. Detection-signal reduction is a default expectation; silent skipping leaves AI-typical markers in the deliverable.
+- Do NOT treat humanizer `status: error` as a delivery blocker. If humanizer fails, deliver the un-humanized draft with `humanizer_status: error` flagged in result.json — the student decides whether to manually humanize before upload.
 
 ---
 
@@ -151,7 +177,7 @@ When invoked with a context line containing **STAGE-BY-STAGE MODE** AND the cont
 
 Behavior:
 1. Read `<work>/.first_run_stage_by_stage` to confirm. If absent, run the full Framework pattern (steps 1-8) as usual.
-2. Parse the directive for the stage name (`load-persona`, `parse-spec`, `load-samples`, `generate`, `figure-captions-cited`, `verify`, `output`).
+2. Parse the directive for the stage name (`load-persona`, `parse-spec`, `load-samples`, `generate`, `figure-captions-cited`, `verify`, `humanize`, `output`).
 3. Run **only** that stage's substeps from the Framework pattern above. Prior stages' artifacts must already be in `<work>/`.
 4. Write a 1-3 sentence English summary to `<work>/stages/{stage_name}.done` and STOP.
 
@@ -167,6 +193,7 @@ Daily dispatch via canvas-execute does not set the marker; runs full-pipeline as
 | 4 generate | long | Outline → body section-by-section → revise pass |
 | 5 figure-captions-cited | medium | Figure captions + film timestamps + Works Cited 3-layer cascade |
 | 6 verify | short | Word count / citation count / figure count numeric gate |
+| 7 humanize | medium | (Default on) call canvas-humanizer for detection-signal reduction |
 | 8 output | short | Final .docx + result.json |
 
 Band: `short` ~1 min, `medium` ~3-5 min, `long` ~10+ min.

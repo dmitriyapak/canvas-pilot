@@ -30,6 +30,7 @@ from src.course_artifacts import (
     unresolved_placeholders,
     write_course_result,
 )
+from src.humanizer_score import score_candidate
 from src.humanizer_segment_extract import extract_locks
 from src.humanizer_segmentation import split_sentences
 from src.run_state import validate_result
@@ -42,6 +43,9 @@ SKILL_NAMES = (
     "canvas-essay",
     "canvas-reading-annotation",
     "canvas-zybooks",
+    "canvas-humanizer",
+    "canvas-humanizer-loop",
+    "canvas-humanizer-surgical",
     "canvas-awkward-syntax",
 )
 COURSE_SKILLS = SKILL_NAMES[:4]
@@ -120,6 +124,7 @@ def test_course_skills_cannot_directly_mutate_canvas_or_zybooks() -> None:
         ("src.overlay_utils", ("canvas_generic_overlay_path",)),
         ("src.humanizer_segmentation", ("split_sentences", "paragraph_segment_counts")),
         ("src.humanizer_segment_extract", ("extract_locks",)),
+        ("src.humanizer_score", ("score_candidate", "word_count_tolerance")),
         (
             "src.awkward_transformation_assigner",
             (
@@ -256,13 +261,24 @@ def test_zybooks_parser_fixture_extracts_only_graded_column() -> None:
     ]
 
 
-def test_awkward_pipeline_fixtures() -> None:
+def test_humanizer_and_awkward_pipeline_fixtures() -> None:
     sentences = split_sentences(
         'Dr. Example wrote "Synthetic Claim" in 2024. The result was clear.'
     )
     assert len(sentences) == 2
     locks = extract_locks(sentences[0], ["Dr. Example"])
     assert {lock["text"] for lock in locks} >= {"Dr. Example", '"Synthetic Claim"', "2024"}
+
+    scored = score_candidate(
+        original="The result was clear for the entire group.",
+        masked_original="The result was clear for the entire group.",
+        original_wc=8,
+        candidate="For the entire group, the result remained clear.",
+        lock_substitutions=[],
+    )
+    assert scored["lock_gate_pass"]
+    assert scored["wc_gate_pass"]
+    assert scored["divergence"] > 0
 
     records = [
         {
