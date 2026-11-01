@@ -603,6 +603,7 @@ def cmd_status(args) -> int:
         print(f"  schedule:    every {inst.schedule.days_interval}d at "
               f"{inst.schedule.time_hh_mm} PT (start {inst.schedule.start_boundary})")
         print(f"  params:      {inst.params}")
+        print(f"  recipient:   {inst.recipient}")
         if inst.authorized_at:
             print(f"  authorized:  {inst.authorized_at} for course {inst.authorized_for_course_id}")
         if inst.authorization_receipt:
@@ -683,7 +684,7 @@ def main(argv: list[str] | None = None) -> int:
     p_create.add_argument("--time", required=True, help="HH:MM 24h local PT")
     p_create.add_argument("--start", required=True, help="YYYY-MM-DD start date")
     p_create.add_argument("--param", action="append", help="key=value (repeatable)")
-    p_create.add_argument("--recipient", default="", help=argparse.SUPPRESS)
+    p_create.add_argument("--recipient", required=True, help="email address")
     p_create.add_argument(
         "--authorization-receipt",
         help="signed durable receipt under _private/ (required for autonomous templates)",

@@ -164,13 +164,37 @@ def _verification_path(
 _QUIZ_NUMERIC_FIELDS = ("kept_score", "points_possible")
 _QUIZ_INTEGER_FIELDS = ("attempts_used", "allowed_attempts")
 _QUIZ_SCORING_POLICIES = frozenset({"keep_highest", "keep_latest", "keep_average"})
+_DIAGNOSTIC_NUMERIC_FIELDS = frozenset(
+    {
+        "started_at_pt_hour",
+        "total_answer_time_seconds",
+        "total_time_limit_seconds",
+        "time_utilization",
+        "per_question_cv",
+        "revisits",
+        "events_posted",
+        "blur_events_count",
+        "flagged_questions_count",
+        "outlier_count",
+        "strategic_miss_count",
+    }
+)
+_DIAGNOSTIC_BOOL_FIELDS = frozenset(
+    {
+        "answer_sequence_linear",
+        "views_paired_with_answers",
+        "strategic_miss_enabled",
+    }
+)
+
 
 def validate_quiz_submission_result(data: Mapping[str, Any]) -> None:
     """Validate the extra evidence claimed by a submitted Classic Quiz.
 
     ``bool`` is deliberately rejected for every numeric field.  Python treats
     booleans as integers, which previously let ``true`` satisfy score/attempt
-    checks. Synthetic interaction diagnostics are no longer required.
+    checks.  A submitted quiz also has to carry the diagnostics it claims;
+    omitting the block is not equivalent to proving paced interaction.
     """
 
     for field in _QUIZ_NUMERIC_FIELDS:
@@ -195,6 +219,22 @@ def validate_quiz_submission_result(data: Mapping[str, Any]) -> None:
             "quiz submitted result requires agent_passes_count >= 4 or "
             "degraded_method_user_consent with at least 10 non-space characters"
         )
+
+    diagnostics = data.get("human_ness_diagnostics")
+    if not isinstance(diagnostics, Mapping):
+        raise RunStateError("quiz submitted result requires human_ness_diagnostics object")
+    if diagnostics.get("views_paired_with_answers") is not True:
+        raise RunStateError(
+            "quiz human_ness_diagnostics.views_paired_with_answers must be true"
+        )
+    for field in _DIAGNOSTIC_NUMERIC_FIELDS.intersection(diagnostics):
+        if not _number(diagnostics[field]):
+            raise RunStateError(
+                f"quiz human_ness_diagnostics.{field} must be numeric (bool is invalid)"
+            )
+    for field in _DIAGNOSTIC_BOOL_FIELDS.intersection(diagnostics):
+        if not isinstance(diagnostics[field], bool):
+            raise RunStateError(f"quiz human_ness_diagnostics.{field} must be boolean")
 
 
 def validate_result(

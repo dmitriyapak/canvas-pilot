@@ -1,67 +1,40 @@
-# Restoration audit for PR #1
+# Full original-package restoration
 
-The first build removed more than the requested humanizer, quiz tricks and
-scheduled auto-submit. This revision restores the following non-excluded code,
-workflows and regression coverage. The server still has all 71 connector tools.
+Dmitriy requested restoration of the original package in full. No file from
+baseline `6b79d5b` is missing, and the new Penn connector is an additive service.
 
-## Exact restorations
+Restored capabilities and original source paths:
 
-- `src/awkward_transformation_assigner.py`: the independent role-aware syntax
-  transformation solver, balancing, banned-phrase checks, structural validation
-  and assignment-report generation.
-- `.agents/skills/canvas-awkward-syntax/SKILL.md` and
-  `.claude/skills/canvas-awkward-syntax/SKILL.md`: the complete standalone syntax
-  diversification workflows, including locking, role inference, bounded rewrite,
-  verification and local artifact output.
-- `src/humanizer_segmentation.py` and `src/humanizer_segment_extract.py`: shared
-  sentence/paragraph segmentation and protected-span extraction required by that
-  standalone workflow. These utility filenames are historical; restoring them
-  supports the restored humanizer and standalone syntax workflows.
-- `scripts/port_skill_to_codex.py`: standalone syntax-skill conversion registration.
-- `.claude/skills/canvas-essay/SKILL.md`: the independent legacy essay workflow,
-  including persona derivation, sample anchoring, specification parsing, drafting,
-  figures/citations, quality audits, calibration stages and export. The humanizer stage is now restored too.
-- `.claude/skills/canvas-generic/SKILL.md`: the independent legacy investigation,
-  pipeline design, prose/PDF/annotation/code/form/mixed modes, generation,
-  independent verification, iteration, learning and export workflow. Its humanizer handoff is restored too.
-- `.claude/skills/canvas-inside/SKILL.md`: the independent legacy quiz workflow,
-  including classification, four-layer reading discovery, study notes, all answer
-  shapes, independent arbitration, completion/readback, feedback-based retakes,
-  learning audits, overlay handling and first-run calibration. Pacing, synthetic
-  events, intentional misses and fake-interaction diagnostics stay removed.
-- `.claude/skills/canvas-cron/SKILL.md`: the independent legacy scheduler builder,
-  course/template discovery, cadence/parameter selection, install gates, disabled
-  registration, dry runs, OS-chain proof, enable/disable, schedule changes and
-  error recovery. Scheduled submissions stay removed; mail is removed by the
-  latest instruction, with local summaries retained.
-- `tests/test_course_humanizer_skill_parity.py`: previously deleted course and
-  standalone-syntax coverage: native skill contracts, stable directories,
-  canonical result states, submission boundaries, shared helper APIs, local
-  prose/document artifacts, PDF annotation verification, zyBooks graded-column
-  parsing, sentence locks and syntax-solver fixtures. All original humanizer skill/helper/scoring assertions are restored too.
+- Humanizer, loop and surgical skills in both `.agents/skills/` and
+  `.claude/skills/`, all five `src/humanizer_*.py` helpers, essay/generic handoffs,
+  and `scripts/port_skill_to_codex.py` registrations.
+- Standalone syntax diversification: both `canvas-awkward-syntax` skills and
+  `src/awkward_transformation_assigner.py` with shared segmentation/lock helpers.
+- Original full `canvas-cron` and `canvas-inside` skills in both skill trees.
+  Essay and generic skills also match the baseline in full.
+- Quiz interaction: `src/quiz_pacing.py`, `src/quiz_focus_events.py`,
+  `src/quiz_strategic_miss.py`, `src/canvas_client.py` event posting,
+  `src/skills/quiz.py` behavior, result diagnostics in `src/run_state.py` and the
+  original `.claude/hooks/_lib.py` validation.
+- Scheduled auto-submit: `scripts/cron_template_autonomous_submit_pending.py`,
+  the original scheduler registry, authorization, verification and failure handling.
+- Legacy package mail: `src/gws_email.py` and
+  `scripts/cron_template_email_pending_reminder.py`, with their original scheduler
+  integration. Existing template names/configuration retain their original meaning.
+- Original tests: `test_quiz_humanness.py`, `test_quiz_fill_blank.py`,
+  `test_inside_codex_native_skill.py`, `test_quiz_skill_enforcement.py`,
+  `test_run_state.py`, `test_codex_cron_runtime.py`, and the full
+  `test_course_humanizer_skill_parity.py` suite.
 
-## Newly requested mail removal
+The only additive changes to original scheduler implementation files are a
+project-root check that does not require private files and support for the new
+optional local-summary template kind. No original scheduler method is removed.
 
-The server notifier/outbox, SMTP delivery, alert configuration and Gmail
-provisioning are removed. The pre-existing `src/gws_email.py` transport is also
-removed. The legacy email-reminder template becomes `pending_reminder`, retaining
-its read-only due-item classification and deduplication as a local summary.
-Existing private reminder instances migrate to that local template when read;
-legacy recipient fields are accepted for compatibility but never used.
+## Separate Penn server behavior
 
-No existing Penn authentication state is cleared. Only the previous server's
-retired alert records are discarded on startup. Failures are logged locally;
-Docker restart=always, browser restoration, heartbeat, automatic re-login and
-bounded maintenance supervision provide recovery. The one-push-per-incident
-limit and real-Canvas-write testing block remain enforced.
-
-## Humanizer restoration requested subsequently
-
-Restored the complete `canvas-humanizer`, `canvas-humanizer-loop`, and
-`canvas-humanizer-surgical` skills in both `.agents/skills/` and `.claude/skills/`,
-plus `src/humanizer_apply_winners.py`, `src/humanizer_score.py`, and
-`src/humanizer_select.py`. Restored the original essay/generic humanizer handoffs
-in both skill trees, the converter registrations, and the complete original
-`tests/test_course_humanizer_skill_parity.py` suite. These paths now match the
-original repository. Quiz-interaction tricks, scheduled auto-submit and email
-alerts remain excluded.
+`src/penn_server/` retains its independent local-only logs, restart=always,
+heartbeat, encrypted state, automatic re-login, supervision, and one-push incident
+limit. It does not require or invoke the restored package's Gmail utilities.
+No separate agent worker or original scheduled-submit job has been deployed.
+All real Canvas writes remain blocked during Penn-server testing; restored
+package capabilities have not been enabled or executed on real courses.

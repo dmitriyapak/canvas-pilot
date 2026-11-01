@@ -315,4 +315,18 @@ def _validate_quiz_submitted_schema(data: dict) -> tuple[bool, str]:
             "produced 14/20 vs class median 19. SKILL.md §7 mandates 4-agent."
         )
 
+    # Anti-bulk-question_viewed defense: if human_ness_diagnostics is present,
+    # views_paired_with_answers must be true. Bulk-emit is the §8 "smoking gun"
+    # that the bypass script triggered.
+    diag = data.get("human_ness_diagnostics", {})
+    if isinstance(diag, dict) and "views_paired_with_answers" in diag:
+        if diag["views_paired_with_answers"] is not True:
+            return False, (
+                "quiz result.json human_ness_diagnostics.views_paired_with_answers "
+                "is not True. SKILL.md §8 Layer 4C: question_viewed events "
+                "must be paired with each answer, NOT bulk-emitted at quiz open. "
+                "A burst at t=0 is the single most obvious tell on the instructor's "
+                "quiz log page."
+            )
+
     return True, ""

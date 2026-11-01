@@ -700,7 +700,7 @@ def test_local_logs_are_bounded_private_and_redact_exception_text(tmp_path):
         logger.propagate = True
 
 
-def test_no_mail_transport_credentials_or_startup_requirement():
+def test_penn_server_has_no_mail_transport_credentials_or_startup_requirement():
     import inspect
     import src.penn_server.app as app
     import src.penn_server.provision as provision
@@ -708,7 +708,7 @@ def test_no_mail_transport_credentials_or_startup_requirement():
 
     root = Path(__file__).resolve().parents[2]
     assert not (root / "src/penn_server/notifications.py").exists()
-    assert not (root / "src/gws_email.py").exists()
+    assert "gws_email" not in inspect.getsource(app)
     assert "gmail" not in inspect.getsource(app)
     assert "gmail" not in inspect.getsource(provision)
     assert "PENN_GMAIL_ADDRESS" not in (root / "deploy/penn/compose.yaml").read_text()

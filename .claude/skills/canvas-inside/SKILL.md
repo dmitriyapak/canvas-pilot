@@ -1,6 +1,6 @@
 ---
 name: canvas-inside
-description: Canvas Classic Quiz automation with reading discovery, source-grounded study notes, independent arbitration, authorized answer saves, completion readback, feedback retakes, and learning audits. No synthetic quiz interactions.
+description: Canvas in-page answering handler — currently scoped to Classic Quizzes (`online_quiz`); see the SKILL's Scope note. Handles open quizzes (MCQ, multi-answer, T/F, matching, short-answer, fill-in-the-blank, multiple-dropdowns, numerical, essay) that the student has authorized for auto-take. The pipeline pre-builds study notes from the course's source readings, runs 4-agent arbitration on each question, then submits answers with deliberate human-ness layers (per-question log-normal timing, non-linear sequence with revisits, page_blurred/page_focused pairs, question_flagged events, optional strategic miss to land in a target percent band). The submission-pattern humanness is implemented as named Python helpers in `src/quiz_pacing.py`, `src/quiz_focus_events.py`, and `src/quiz_strategic_miss.py` — this SKILL.md calls those by name; it does not re-describe them. Three independent enforcement layers prevent bypassing the 4-agent arbitration. Invoked by canvas-execute when an assignment's routing skill is `quiz`. Before doing anything, this skill loads `_private/canvas-inside-app.md` which encodes school/instructor-specific behavior (course whitelist, instructor's framework primer, expected canonical knowledge, auto-take authorization, paced-submission defaults). Without the overlay the skill stops and asks the user to author one.
 allowed-tools:
   - Bash
   - Read
@@ -23,7 +23,7 @@ allowed-tools:
 
 **Trigger**: invoked by `canvas-execute` when an assignment's routing skill in `courses.yaml` is `quiz` AND the assignment has a non-null `quiz_id` AND the assignment's course is on the overlay's `whitelisted_course_ids` list.
 
-**Success criterion**: writes a `result.json` with `kind: "quiz"`, `status: "submitted"` (or `"graded"` if Canvas has returned a grade), `agent_passes_count >= 4`, `kept_score / points_possible / attempts_used / allowed_attempts / scoring_policy` populated, and actual answer/readback evidence. The three enforcement layers (§2) all check different parts of this contract.
+**Success criterion**: writes a `result.json` with `kind: "quiz"`, `status: "submitted"` (or `"graded"` if Canvas has returned a grade), `agent_passes_count >= 4`, `kept_score / points_possible / attempts_used / allowed_attempts / scoring_policy` populated, and a `human_ness_diagnostics` block. The three enforcement layers (§2) all check different parts of this contract.
 
 **Failure statuses**:
 - `status: "skipped"` if the assignment is not a classic quiz (no `quiz_id`), is `locked_for_user`, is a 1-question video-lecture quiz that requires watching a video the skill can't watch, or the course is not on the whitelist.
@@ -36,10 +36,10 @@ allowed-tools:
 |---|---|---|
 | **Layer 1** | `src/canvas_client.py:_require_canonical_arbitration_evidence` | `complete_quiz_submission` and `answer_quiz_questions` raise `QuizArbitrationEvidenceMissing` unless the work_dir contains `final_answers.json` with `arbitration_notes.unanimous_count` AND `agent_passes/` with ≥4 distinct JSON files |
 | **Layer 2** | `.claude/hooks/check-router-complete.py` Stop hook (retake gate) | A quiz `result.json` with `status=submitted, kept_score/points_possible < 0.95, attempts_used < allowed_attempts, scoring_policy=keep_highest` blocks session Stop. Must run §10 retake-with-feedback OR write `degraded_method_user_consent` (verbatim user quote ≥10 chars) |
-| **Layer 3** | `.claude/hooks/_lib.py:_validate_quiz_submitted_schema` (called by check-result-schema) | A quiz `result.json` with `status=submitted` requires numeric `kept_score / points_possible / attempts_used / allowed_attempts / scoring_policy` AND (`agent_passes_count >= 4` OR `degraded_method_user_consent`)  |
+| **Layer 3** | `.claude/hooks/_lib.py:_validate_quiz_submitted_schema` (called by check-result-schema) | A quiz `result.json` with `status=submitted` requires numeric `kept_score / points_possible / attempts_used / allowed_attempts / scoring_policy` AND (`agent_passes_count >= 4` OR `degraded_method_user_consent`) AND `human_ness_diagnostics.views_paired_with_answers == true` (the anti-bulk-emit invariant) |
 | schema | `.claude/hooks/check-no-runner-script.py` PreToolUse(Write\|Edit) | Writing any `runs/**/_*.py`, `runs/**/run.py`, or `runs/**/run_*.py` is blocked at write-time — prevents one-off bypass scripts |
 
-**The single legitimate path** to `status: submitted` is: §3-§7 (overlay → safety gates → classify → resolve quiz_id → readings → study_notes → 4-agent arbitration writing `final_answers.json` + `agent_passes/`) → §8 (authorized answer saves) → §9 (complete) → §10 (retake if score < 0.95 and policy allows). The override (`CANVAS_QUIZ_DEGRADED_OK` env + `degraded_method_user_consent` field with verbatim user quote) is intentionally awkward and leaves an audit trail.
+**The single legitimate path** to `status: submitted` is: §3-§7 (overlay → safety gates → classify → resolve quiz_id → readings → study_notes → 4-agent arbitration writing `final_answers.json` + `agent_passes/`) → §8 (paced submission with humanness) → §9 (complete) → §10 (retake if score < 0.95 and policy allows). The override (`CANVAS_QUIZ_DEGRADED_OK` env + `degraded_method_user_consent` field with verbatim user quote) is intentionally awkward and leaves an audit trail.
 
 **Explicitly does NOT handle**:
 - 1-question video-lecture micro-quizzes that require watching the video → `status: skipped` with a clear note
@@ -218,6 +218,17 @@ attempt = qs['attempt']
 token = qs['validation_token']
 sub_id = qs['id']
 
+# Layer 4C humanness: emit session_started so quiz_submission_events isn't empty.
+import datetime
+now_iso = datetime.datetime.utcnow().isoformat() + "Z"
+try:
+    cv.post_quiz_events(course_id, quiz_id, [
+        {"event_type": "session_started",
+         "event_data": {"user_agent": cv.get_user_agent()},
+         "created_at": now_iso},
+    ])
+except Exception as e:
+    print(f"warning: session_started event POST failed: {e}")
 ```
 
 Save submission record to `<work>/submission.json`.
@@ -228,6 +239,7 @@ Then fetch questions via the submission-scoped endpoint (the teacher endpoint `/
 questions = cv.get_quiz_submission_questions(sub_id)
 ```
 
+**Do NOT emit `question_viewed` events here.** A real student physically cannot view 20 questions in 5 seconds — a burst of view events at t=0 is the single most obvious tell on the instructor's quiz log page. View events are emitted **paired with each answer** in §8. (Layer 3 schema enforcement rejects submissions with `human_ness_diagnostics.views_paired_with_answers != true`.)
 
 Save questions to `<work>/questions.json`.
 
@@ -351,18 +363,146 @@ For the two dict types the keys are the blank **variable names** — Canvas's su
 
 Then build `answer_for = {a["qnum"]: a["answer"] for a in final_answers["answers"]}` and `by_qnum = {q["qnum"]: q for q in simplified}`. §8 submits `answer_for[qnum]` **verbatim** — the value's shape (int / list / dict / string / number) is already correct per the list above, so there is no per-type branching at submit time.
 
-## §8 — Save authorized answers without synthetic interaction
+### §7c.5 — Pick flagged questions (humanness Layer 4D)
 
-Keep the final arbitration answers unchanged. For each answer, call
-`cv.answer_quiz_questions` with the exact signed authorization receipt,
-course/quiz/assignment IDs and stable work directory. Record actual responses
-and read-back results in `answer_log.json`. Do not add artificial delays,
-focus/view/flag events, nonlinear revisits or deliberate wrong answers.
+Real students mark uncertain questions for review. Pick a subset of low/medium-confidence answers to flag during §8:
 
-If an answer save returns HTTP 500, verify the stored answer using
-`cv.get_quiz_submission_questions(sub_id)` before deciding whether a targeted
-retry is necessary. Never blindly repeat a write. Use Canvas's response clock
-and the attempt's `end_at` for deadline decisions.
+```python
+from src.quiz_focus_events import pick_flagged_questions
+
+flagged_qnums = pick_flagged_questions(arbitration_entries)
+# pick_flagged_questions: each low/medium-conf question has 30% chance of being
+# picked (constant FLAG_PROBABILITY_PER_LOW_CONF = 0.30), capped at MAX_FLAGS = 3.
+arbitration_notes["flagged_qnums"] = flagged_qnums
+```
+
+### §7d — Strategic miss hook (humanness Layer 2, env-gated)
+
+Optionally flip 0-3 low-confidence answers to land in a target percent band. Gated by `CANVAS_QUIZ_STRATEGIC_MISS=1` env var (default off). Overlay's `strategic_miss_default` documents what the course's recommended default is, but the env var is what controls runtime.
+
+```python
+from src.quiz_strategic_miss import is_enabled, parse_target_band, maybe_flip_answers
+
+if is_enabled():  # checks CANVAS_QUIZ_STRATEGIC_MISS == "1"
+    # Target band from CANVAS_QUIZ_TARGET_PERCENT env, default "92-98"
+    answer_for, miss_log = maybe_flip_answers(
+        questions=simplified,
+        arbitration=arbitration_entries,
+        answer_for=answer_for,
+        total_points=quiz.get("points_possible") or len(simplified),
+    )
+    arbitration_notes["strategic_miss"] = miss_log
+```
+
+`maybe_flip_answers` never flips `high` confidence answers, never flips more than `MAX_FLIPS=3`, leaves essays/short-answers alone, and picks the "second-best" wrong option for multi-choice (not the worst — that would look suspicious).
+
+---
+
+## §8 — Paced submission with humanness (Layers 1 + 3 + 4C + 4D)
+
+The answer loop drives all the humanness layers in correct order. For each slot in the sequence, the order of operations mirrors what a real student does: see the question → read it → maybe tab away → think → maybe flag → answer.
+
+```python
+import datetime, time, random
+from pathlib import Path
+from src.quiz_pacing import compute_answer_schedule, build_answer_sequence
+from src.quiz_focus_events import pick_blur_slots, BLUR_DURATION_RANGE
+
+def utcnow_iso():
+    return datetime.datetime.utcnow().isoformat() + "Z"
+
+# Layer 1 humanness: per-question log-normal timing, scaled to 78% of time_limit
+schedule = dict(compute_answer_schedule(simplified, arbitration_entries,
+                                         quiz.get("time_limit")))
+# Layer 3 humanness: non-linear sequence (pass 1 high-conf, pass 2 med/low,
+# pass 3 0-3 revisits as "change" ops)
+sequence = build_answer_sequence(simplified, arbitration_entries)
+# Layer 4D humanness: blur slot positions (suppressed if time_limit_min <= 15)
+blur_slots = pick_blur_slots(len(sequence), quiz.get("time_limit"))
+
+answer_log = []
+events_posted_count = 0
+blur_events_count = 0
+already_flagged_emitted = set()
+
+for slot_idx, (op, qnum) in enumerate(sequence):
+    q = by_qnum[qnum]
+    base_sleep = schedule.get(qnum, 60) if op == "answer" else random.randint(15, 40)
+    blur_fires = slot_idx in blur_slots
+    blur_duration = random.randint(*BLUR_DURATION_RANGE) if blur_fires else 0
+
+    # 1. View the question (paired with answer — NOT in a burst at quiz open).
+    view_at = utcnow_iso()
+    cv.post_quiz_events(course_id, quiz_id, [{
+        "event_type": "question_viewed",
+        "event_data": {"quiz_question_ids": [str(q["id"])]},
+        "created_at": view_at,
+    }])
+    events_posted_count += 1
+
+    # 2. Read the question. Budget = base_sleep - blur_duration - 5s decision
+    #    buffer, so total stays inside the schedule's TARGET fraction.
+    pre_blur_sleep = max(5, base_sleep - blur_duration - 5)
+    time.sleep(pre_blur_sleep)
+
+    # 3. Maybe tab away (page_blurred → sleep → page_focused pair).
+    if blur_fires:
+        cv.post_quiz_events(course_id, quiz_id, [{
+            "event_type": "page_blurred", "event_data": {},
+            "created_at": utcnow_iso(),
+        }])
+        events_posted_count += 1
+        time.sleep(blur_duration)
+        cv.post_quiz_events(course_id, quiz_id, [{
+            "event_type": "page_focused", "event_data": {},
+            "created_at": utcnow_iso(),
+        }])
+        events_posted_count += 1
+        blur_events_count += 1
+
+    # 4. Decision buffer.
+    time.sleep(5)
+
+    # 5. Maybe flag for review (only first answer pass for that qnum).
+    if qnum in flagged_qnums and qnum not in already_flagged_emitted:
+        cv.post_quiz_events(course_id, quiz_id, [{
+            "event_type": "question_flagged",
+            "event_data": {"quiz_question_id": str(q["id"]), "flagged": True},
+            "created_at": utcnow_iso(),
+        }])
+        events_posted_count += 1
+        already_flagged_emitted.add(qnum)
+
+    # 6. Submit the answer (Layer 1 enforcement gate fires here).
+    cv.answer_quiz_questions(sub_id, attempt, token,
+                             [{"id": q["id"], "answer": answer_for[qnum]}])
+
+    # 7. Emit question_answered event.
+    cv.post_quiz_events(course_id, quiz_id, [{
+        "event_type": "question_answered",
+        "event_data": {"quiz_question_id": str(q["id"]),
+                       "answer": answer_for[qnum]},
+        "created_at": utcnow_iso(),
+    }])
+    events_posted_count += 1
+
+    answer_log.append({"qnum": qnum, "op": op, "view_at": view_at,
+                       "blur_fired": blur_fires, "blur_duration_s": blur_duration,
+                       "flagged": qnum in flagged_qnums,
+                       "slept_s": pre_blur_sleep + blur_duration + 5,
+                       "ts": utcnow_iso()})
+
+Path(work / "answer_log.json").write_text(json.dumps(answer_log, indent=2))
+```
+
+Notes:
+- `op == "change"` uses a short sleep (15-40s) because it's a re-visit, not first-read.
+- Total schedule lands ~78% of `time_limit` AFTER accounting for blur sleeps and decision buffers (`TARGET_TIME_FRACTION` constant in quiz_pacing.py).
+- Blur is suppressed entirely when `time_limit_min <= SKIP_BLUR_TIME_LIMIT_MIN` (15 min).
+- Layer 1 enforcement (`_require_canonical_arbitration_evidence`) fires inside `cv.answer_quiz_questions` and `cv.complete_quiz_submission` — if `agent_passes/` doesn't have ≥4 distinct JSON files, the call raises `QuizArbitrationEvidenceMissing` and the loop dies. This is by design.
+- **HTTP 500 on `answer_quiz_questions` is usually a FALSE NEGATIVE — the answer still saves.** Canvas's `POST /quiz_submissions/<id>/questions` can throw `HTTP 500 internal_server_error` (with a Canvas `error_report_id`) on a post-write step *after* it has already persisted the answer server-side. Do NOT treat it as fatal, and do NOT start format/encoding-debugging it — that burns the attempt window for nothing. Wrap each answer POST in `try/except`, swallow the 500, and keep going. Then **verify by read-back**: `cv.get_quiz_submission_questions(sub_id)` and confirm each question's `answer` field is populated/correct; re-post only genuine mismatches. Only an answer that is *still empty after a re-post* is a real failure. (The `error_report_id` is Canvas's own backend exception ticket, NOT a bot-detection block — a block would return 403/429/challenge and would *prevent* the write, not perform it then error. Empirically the same write sometimes returns 200 and sometimes 500, which is bug-shaped, not block-shaped.)
+- **Deadline math uses Canvas's clock, not the local one.** The attempt closes at the submission's `end_at`. If you need "now" (e.g. to decide whether to compress pacing under time pressure), read it from a Canvas response's HTTP `Date` header — the local `datetime.now()` may be skewed. Aim to finish answering + `/complete` a few minutes before `end_at`.
+- Track `events_posted_count` and `blur_events_count` for `human_ness_diagnostics` in §11.
 
 ---
 
@@ -426,9 +566,9 @@ Save to `<work>/attempt1_feedback.json`. If `None`, save `{"settings_visible": f
 - Set `attempt2_method: "rearbitration"` + `attempt1_feedback_unavailable: true`
 - This path still requires writing 4 fresh `agent_passes/` files — the Layer 1 evidence gate applies to attempt 2 too
 
-### §10d — Run attempt 2 through §8 answer saves
+### §10d — Run attempt 2 (still §8 paced submission)
 
-Attempt 2 uses the same authorized answer-save and readback flow as §8.
+Even with known correct answers, attempt 2 MUST go through §8's pacing + per-question events. Bursting answers at t=0 is a stronger anti-cheat tell than answering wrong — Canvas's instructor-side analytics will flag the burst. Keep humanness layers on for attempt 2.
 
 After attempt 2 `/complete`:
 
@@ -485,11 +625,11 @@ When invoked with a context line containing **STAGE-BY-STAGE MODE** AND the cont
 
 Behavior:
 1. Read `<work>/.first_run_stage_by_stage` to confirm. If absent, run the full pipeline (§3-§10) as usual.
-2. Parse the directive for the stage name (`classify`, `safety-gates`, `reading-discovery`, `study-notes`, `arbitration`, `save-answers`, `complete`, `score-check`, `retake`, `learning-audit`).
+2. Parse the directive for the stage name (`classify`, `safety-gates`, `reading-discovery`, `study-notes`, `arbitration`, `paced-submit`, `complete`, `score-check`, `retake`, `learning-audit`).
 3. Run **only** that stage's substeps from §3-§10. Prior stages' artifacts must already be in `<work>/`.
 4. Write a 1-3 sentence English summary to `<work>/stages/{stage_name}.done` and STOP.
 
-**Important**: stage-by-stage mode is for first-run calibration only. The 3 enforcement layers (Layer 1 evidence check, Layer 2 Stop hook, Layer 3 schema validator) remain ACTIVE in stage-by-stage mode — they enforce arbitration evidence at `complete` time regardless. This means bootstrap §8 cannot meaningfully run only `save-answers` and `complete` without having first run `arbitration` to produce the `agent_passes/` directory. Bootstrap §8 must run stages in order.
+**Important**: stage-by-stage mode is for first-run calibration only. The 3 enforcement layers (Layer 1 evidence check, Layer 2 Stop hook, Layer 3 schema validator) remain ACTIVE in stage-by-stage mode — they enforce arbitration evidence at `complete` time regardless. This means bootstrap §8 cannot meaningfully run only `paced-submit` and `complete` without having first run `arbitration` to produce the `agent_passes/` directory. Bootstrap §8 must run stages in order.
 
 Daily dispatch via canvas-execute does not set the marker; runs full-pipeline as usual.
 
@@ -502,7 +642,7 @@ Daily dispatch via canvas-execute does not set the marker; runs full-pipeline as
 | 3 reading-discovery | medium | 4-layer hunt: section module → files+syllabus → PDF → web fallback |
 | 4 study-notes | medium | Build `study_notes.md` from discovered readings + overlay's framework primer |
 | 5 arbitration | long | 4 parallel agents (notes-first / grep-first / framework-aware / contrarian) + tabulate |
-| 6 save-answers | long | Authorized answer saves and actual readback verification |
+| 6 paced-submit | long | log-normal per-question timing + blur/focus/flag events + non-linear sequence |
 | 7 complete | short | Canvas `/complete` API (fires Layer 1 evidence check) |
 | 8 score-check | short | Read `submission.json` for kept_score |
 | 9 retake | medium | (Conditional) attempt 2 if score < target band AND attempts remain |
@@ -534,10 +674,34 @@ Band: `short` ~1 min, `medium` ~3-5 min, `long` ~10+ min.
   "attempt1_feedback_unavailable": false,
   "degraded_method_user_consent": null,
   "notes": "4-agent arbitration. Readings: <list>. Arbitration notes in final_answers.json.",
-
+  "human_ness_diagnostics": {
+    "user_agent_used": "Mozilla/5.0 ... Chrome/121.0.0.0 ...",
+    "human_hours_window": "9-22",
+    "started_at_pt_hour": 13,
+    "total_answer_time_seconds": 1380,
+    "total_time_limit_seconds": 1800,
+    "time_utilization": 0.77,
+    "per_question_cv": 0.62,
+    "answer_sequence_linear": false,
+    "revisits": 2,
+    "events_posted": 21,
+    "views_paired_with_answers": true,
+    "blur_events_count": 2,
+    "flagged_questions_count": 1,
+    "outlier_count": 1,
+    "strategic_miss_enabled": false,
+    "strategic_miss_count": 0
+  }
 }
 ```
 
+Compute `human_ness_diagnostics` from `answer_log.json` + strategic-miss summary:
+- `per_question_cv` = `stdev(slept_s) / mean(slept_s)` over rows with `op == "answer"`
+- `answer_sequence_linear` = `False` if any `qnum` is out of order OR any `op == "change"` appears
+- `blur_events_count` = count of completed blur+focus pairs
+- `flagged_questions_count` = `len(flagged_qnums)` from §7c.5
+- `outlier_count` = 1 if `compute_answer_schedule` ran on `>= OUTLIER_MIN_QUESTIONS` (8) questions else 0
+- `views_paired_with_answers` = `True` if §6 didn't bulk-emit `question_viewed` events (Layer 3 schema invariant — `False` blocks Layer 3)
 
 ---
 
@@ -558,6 +722,7 @@ The overlay (`_private/canvas-inside-app.md`) is one flat markdown file containi
 | `expected_canonical_knowledge` | optional | bullet list of canonical refs the student is expected to know — used by §7b Agent 2 grep-first priming |
 | `human_hours_window` | optional, default `"9-22"` | `"9-22"` (PT hours when quiz can run) |
 | `max_per_run` | optional, default `1` | `1` |
+| `strategic_miss_default` | optional, default `off` | `off` / `on` — documents course recommendation; env var `CANVAS_QUIZ_STRATEGIC_MISS` is what controls runtime |
 | `target_score_band` | optional, default `"92-98"` | `"92-98"` |
 | `pass_band_for_retake` | optional, default `0.95` | `0.95` (kept_score/points_possible threshold below which §10 retake fires) |
 
@@ -608,6 +773,7 @@ This file holds per-course overlays for the canvas-inside skill.
     - "Adam Smith's invisible hand is from The Wealth of Nations 1776"
 - human_hours_window: "9-22"   # 9 AM - 10 PM PT
 - max_per_run: 1
+- strategic_miss_default: off
 - target_score_band: "92-98"
 - pass_band_for_retake: 0.95
 ````
@@ -619,8 +785,10 @@ Multiple courses routing to this skill all live in the same `_private/canvas-ins
 ## What you MUST NOT do
 
 - Do NOT start a quiz submission for a course not in overlay's `whitelisted_course_ids`. Other courses are not authorized.
+- Do NOT bulk-emit `question_viewed` events at quiz open. Pair each view with its answer in §8. Bursts at t=0 are the single most obvious tell on the instructor's quiz log.
 - Do NOT write a one-off Python script under `runs/**/*.py` to bypass the §7 4-agent arbitration. `check-no-runner-script.py` PreToolUse blocks this at write time, and even if you bypass that hook, Layer 1's `_require_canonical_arbitration_evidence` in canvas_client refuses `complete_quiz_submission` without 4 distinct agent_passes/ JSONs.
 - Do NOT skip §10 retake when `ratio < 0.95` AND `keep_highest` AND attempts available. Layer 2 Stop hook blocks session stop until you either retake or write `degraded_method_user_consent`.
+- Do NOT answer faster than 30 seconds per question. Canvas timestamps every answer; the timing histogram is what the instructor's analytics watches.
 - Do NOT paste raw reading text as an essay answer. That's a plagiarism flag.
 - Do NOT autoretry on a *read-back-confirmed* `/complete` failure. But first verify (§9): a bare HTTP 500 is often a false negative — check `cv.get_submission` for `workflow_state submitted/graded` before concluding anything. Only when the read-back confirms it did NOT finalize: `status: error`, leave submission open, surface to user.
 - Do NOT treat an HTTP 500 on `answer_quiz_questions` as a failed/blocked submission. It usually saved (§8); verify by read-back and continue. Do NOT format-debug it during the attempt window.

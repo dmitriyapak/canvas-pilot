@@ -39,17 +39,17 @@ comparison.
 
 ## Penn Canvas Pilot 2.0 server
 
-The Penn server lives in `src/penn_server/`, with deployment instructions in
-[deploy/penn/README.md](deploy/penn/README.md). It provides authenticated
-Streamable HTTP tools for Grok chat, ChatGPT chat, Dot, Grok Bot and Codex.
-Clients orchestrate workflows directly; no separate agent worker runs on the VPS.
-Encrypted browser/PennKey state, heartbeat and automatic recovery minimize login.
-Docker restarts persistent failures automatically. Diagnostics stay in bounded
-local logs; no mail transport or alert credentials are used.
-All real Canvas writes remain blocked during testing; write tools are live-untested.
-Humanizer workflows and their essay/generic integrations are preserved. Synthetic
-quiz pacing/focus/intentional misses and scheduled auto-submit remain removed.
-Existing drafting and authorized interactive submission workflows remain available.
+The original Canvas Pilot package and its workflows are preserved in full,
+including humanizers, quiz interaction helpers, scheduled submission and legacy
+email utilities. No original feature is removed by the Penn server addition.
+
+The additive server lives in `src/penn_server/`; see
+[deployment instructions](deploy/penn/README.md). It uses authenticated Streamable
+HTTP, encrypted browser/PennKey state, heartbeat and automatic recovery.
+The Penn server itself uses local logs and requires no mail credentials.
+Its testing deployment blocks every real Canvas write. Original package workflows
+are restored as source capabilities; they have not been enabled or executed
+against real Canvas courses during this build.
 
 
 ## Workflow
@@ -98,7 +98,8 @@ Canvas Pilot:
     Drafts mirrored to final_drafts/ for review.
 ```
 
-You review the drafts and upload manually by default. Scheduled auto-submit is removed. In an interactive session,
+You review the drafts and upload manually by default. Auto-submit only happens
+through an explicitly configured cron authority. In an interactive session,
 submission requires a later exact `submit N`, `take quiz N`, or `retake quiz N`
 message, a verified local result, and a short-lived target-exact receipt.
 
@@ -271,7 +272,7 @@ at runtime, without an overlay. Legacy Claude skill mirrors remain frozen under
 | `canvas-scan` | Reads `courses.yaml`, queries Canvas for assignments in the pending window, writes `plan.json`, and stops. Empty routes hand off to `canvas-skill-opportunity`, not directly to bootstrap. |
 | `canvas-execute` | Reads the user's approval reply against `plan.json`, archives approved items' old result slots, dispatches approved items to their per-course skill, gathers results, writes `REPORT.md`, and mirrors drafts to `final_drafts/`. It does not infer submission authority from plan approval. |
 | `canvas-submit` | Accepts one later exact `submit N`, `take quiz N`, or `retake quiz N`, revalidates the current plan and local evidence, issues one signed receipt, mutates only that target, and verifies Canvas by read-back. |
-| `canvas-cron` | Manages disabled-first read-only scans and local summaries with side-effect-free dry runs and post-state checks. |
+| `canvas-cron` | Manages disabled-first scan, email, and explicitly authorized autonomous templates with side-effect-free dry runs and post-state checks. |
 | `canvas-skip` | Punts an assignment to manual handling. Logs to the daily `todo.md`, returns `skipped` status. Used for Lockdown Browser quizzes and any other intrinsic can't-do. |
 
 ### Per-course skeletons (framework + local overlay)
@@ -530,7 +531,7 @@ help, the workflow soft-stops and asks for the missing input instead of guessing
 - Write a daily `REPORT.md` with an urgent banner, status per item, and a
   next-step recommendation.
 - Mirror drafts to a `final_drafts/` folder for human review.
-- Local due-item summaries for assignments due today / tomorrow (separate skill).
+- Email reminders for assignments due today / tomorrow (separate skill).
 
 ## What Canvas Pilot does not do
 

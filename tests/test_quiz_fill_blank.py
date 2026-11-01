@@ -65,6 +65,54 @@ def _blank_type_answers():
     }
 
 
+# ---------- quiz_pacing handles the new types ----------
+
+def test_pacing_no_keyerror_on_blank_types():
+    from src.quiz_pacing import compute_answer_schedule, build_answer_sequence
+    random.seed(11)
+    qs = _blank_type_questions()
+    arb = {q["qnum"]: {"confidence": "medium"} for q in qs}
+    sched = compute_answer_schedule(qs, arb, time_limit_min=20)
+    assert len(sched) == len(qs)
+    assert all(sec >= 15 for _, sec in sched)
+    seq = build_answer_sequence(qs, arb)
+    answered = sorted(q for op, q in seq if op == "answer")
+    assert answered == [1, 2, 3, 4]
+
+
+# ---------- strategic_miss never corrupts blank-type answers ----------
+
+def test_strategic_miss_leaves_blank_types_untouched(monkeypatch):
+    from src.quiz_strategic_miss import maybe_flip_answers
+    monkeypatch.setenv("CANVAS_QUIZ_STRATEGIC_MISS", "1")
+    monkeypatch.setenv("CANVAS_QUIZ_TARGET_PERCENT", "10-20")  # aggressive: wants a big drop
+    random.seed(5)
+    qs = _blank_type_questions()
+    arb = [{"qnum": q["qnum"], "confidence": "low"} for q in qs]  # all low → all candidates
+    answer_for = _blank_type_answers()
+    new, log = maybe_flip_answers(qs, arb, answer_for, total_points=4)
+    # None of the blank types are flippable → every answer unchanged, no crash on dict/number
+    assert new == answer_for
+
+
+def test_strategic_miss_mixed_quiz_only_flips_mcq(monkeypatch):
+    from src.quiz_strategic_miss import maybe_flip_answers
+    monkeypatch.setenv("CANVAS_QUIZ_STRATEGIC_MISS", "1")
+    monkeypatch.setenv("CANVAS_QUIZ_TARGET_PERCENT", "10-20")
+    random.seed(2)
+    qs = _blank_type_questions() + [
+        {"qnum": 5, "id": 5005, "type": "multiple_choice_question",
+         "answers": [{"id": 90}, {"id": 91}, {"id": 92}, {"id": 93}]},
+    ]
+    arb = [{"qnum": q["qnum"], "confidence": "low"} for q in qs]
+    answer_for = dict(_blank_type_answers())
+    answer_for[5] = 90
+    new, log = maybe_flip_answers(qs, arb, answer_for, total_points=5)
+    for qnum in (1, 2, 3, 4):
+        assert new[qnum] == answer_for[qnum], f"blank type q{qnum} must not change"
+    assert new[5] in (90, 91, 92, 93)  # MCQ may flip, but stays a valid option id
+
+
 # ---------- evidence gate handles dict answers ----------
 
 @pytest.fixture

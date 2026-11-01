@@ -1,6 +1,6 @@
 ---
 name: canvas-cron
-description: Install, inspect, pause, change and delete read-only scans and local due-item summaries via the existing scheduler. No email delivery or scheduled Canvas submissions.
+description: Install / inspect / pause / change / delete Canvas Pilot cron instances via Windows Task Scheduler. The skill is a **course-agnostic interactive builder** — it lists the student's courses from courses.yaml, asks which course they want a cron for, which action template (email reminder vs autonomous submit), when (schedule), and which template-specific knobs to tune. Autonomous templates require the student to type `授权` to authorize auto-submit. Then walks 5 install gates end-to-end (yaml + render XML → schtasks /create → dry-run classifier → force-fire 60s OS trigger proof → enable schedule). Cookie health is checked at real fire time (not in dry-run); if Canvas session is dead the cron sends a wake-up email instead of silently launching Chromium. Triggered by "装个 cron" / "加个 cron" / "改 cron 时间" / "停掉 cron" / "看 cron 状态" / "删掉 cron" / "install a cron" / "set up a cron" / "/canvas-cron". The skill **zero-hardcodes** course names, template names, instance names, course IDs — every enumeration comes from the CLI's list-courses / list-templates / list output, computed at runtime.
 allowed-tools: Bash, PowerShell, Read, AskUserQuestion
 ---
 
@@ -92,9 +92,9 @@ options:
 ```
 
 Capture the chosen `course_id` for later. The special value `"all"` is only
-supported by templates whose code handles it (currently `pending_reminder`).
+supported by templates whose code handles it (currently `email_pending_reminder`).
 If the student picks "All courses" and §3 chooses a template that does NOT
-support all-courses (e.g. a single-course template — such templates
+support all-courses (e.g. `autonomous_submit_pending` — autonomous templates
 need a single concrete course_id for the CC prompt), warn and force re-pick
 of either course or template.
 
@@ -112,16 +112,16 @@ options:
   - ...
 ```
 
-Capture the chosen `template_name` and its `kind` (scan / local) for
+Capture the chosen `template_name` and its `kind` (email / autonomous) for
 later branching at §6.
 
 ## §4 — (install or change_schedule) choose schedule
 
 Three sub-questions via AskUserQuestion (one at a time, or one multi-question
-call — your choice). Use the existing schedule controls:
+call — your choice). Defaults sensible to email or autonomous kind:
 
-1. **Cadence**: every N days. Default: 1 (daily).
-2. **Time**: HH:MM in 24h local PT. Default: "09:00".
+1. **Cadence**: every N days. Defaults: email kind → 1 (daily), autonomous → 2.
+2. **Time**: HH:MM in 24h local PT. Defaults: email → "09:00", autonomous → "19:00".
 3. **Start date**: YYYY-MM-DD. Default: tomorrow's date in PT.
 
 Use natural ranges in the option labels: "every 1 day (daily)", "every 2 days",
@@ -137,11 +137,23 @@ the spec's `type` (int / str / bool).
 If the student says "use defaults" up-front, skip all per-param questions and
 use spec defaults across the board.
 
-## §6 — Read-only boundary
+## §6 — (install only, kind=autonomous) 授权 keyword
 
-Only scans and local due-item summaries are supported. Do not install email
-alerts or scheduled submissions. On the Penn VPS use the built-in read-only
-scan schedule; no separate agent worker is deployed.
+If `kind == "autonomous"`, show this exact prose:
+
+> **This cron template will spawn a fresh Claude Code session that runs
+> `/canvas-execute` and may submit to Canvas without manual approval each
+> time it fires.**
+>
+> Type `授权` or `authorize` to proceed. Anything else aborts (nothing
+> written, nothing registered).
+
+Read the reply. If it doesn't equal `授权` or `authorize` (case-insensitive,
+trimmed), abort with:
+
+> No authorization received. Nothing was created. Stopping.
+
+For `kind == "email"`, skip §6 (no auto-submit means no authorization needed).
 
 ## §7 — install: G1-G5 install gates
 
@@ -158,6 +170,8 @@ python scripts/canvas_cron.py create <instance_name> \
     --course <course_id> \
     --days <N> --time <HH:MM> --start <YYYY-MM-DD> \
     --param key1=value1 --param key2=value2 \
+    --recipient <email_from_secrets_or_AskUserQuestion> \
+    [--authorized]      # ONLY if §6 passed
 ```
 
 Expected stdout:
@@ -193,8 +207,11 @@ python scripts/canvas_cron.py fire <instance_name> --os-trigger
 
 Tell the student up front:
 
-> Force-firing the registered read-only task once to prove the OS trigger
-> chain works. Failures are recorded locally; nothing is emailed or submitted.
+> Force-firing the registered task once via Task Scheduler to prove the OS
+> trigger chain works. This takes about 60 seconds. If the cookie is
+> currently dead, the cron will send a wake-up email; otherwise (autonomous)
+> the CC session keeps running in the background up to its execution time
+> limit and emails the result.
 
 Expected: `LastTaskResult` is `0` / `0x0` / `0x41301` (running). Anything else
 = G4 failed; leave task disabled and surface the error.
@@ -208,7 +225,8 @@ python scripts/canvas_cron.py enable <instance_name>
 Tell the student:
 
 > ✅ Install complete. Instance `<name>` is enabled. Next fire: <next_run from
-> stdout>. Session failures are written only to the local scheduler log.
+> stdout>. If the Canvas cookie is dead at fire time, you'll get a wake-up
+> email instead of a silent failure.
 
 ## §8 — change_schedule re-register flow
 
@@ -237,9 +255,9 @@ python scripts/canvas_cron.py delete <name>
 | G2 schtasks /create exit 1 | task with same name + different config exists | The CLI does `/delete /f` first; if still failing, check `schtasks /query` |
 | G3 classifier crash | bug in template or Canvas API error | Inspect `runs/_<name>_log.txt`; leave task disabled |
 | G4 LastTaskResult = 0x1 | action exited code 1 | Check `runs/_<name>_log.txt` for traceback |
-| G4 LastTaskResult = 0x41301 | scan session still running — OK | Inspect the local result/log |
+| G4 LastTaskResult = 0x41301 | autonomous CC session still running — OK | Wait for result email |
 | Enable fails | task missing or action path broken | `delete` + reinstall |
-| Local log records expired session | cron tried to fire but Canvas session dead | Run `python -m src.canvas_login` to refresh; next cron will retry |
+| User got cookie-expired email | cron tried to fire but Canvas session dead | Run `python -m src.canvas_login` to refresh; next cron will retry |
 
 ## Hard rules
 
@@ -251,10 +269,11 @@ python scripts/canvas_cron.py delete <name>
   `canvas_cron.py enable` / `disable` which route through PowerShell cmdlets
   (avoids password prompt on Win11 22H2+).
 - **Never** force-fire `--os-trigger` outside §7 install or explicit student
-  request. It is a real read-only Task Scheduler trigger.
+  request. It's a real Task Scheduler trigger that for autonomous templates
+  may actually submit homework.
 - **Stop at any failed gate.** Don't advance G(n+1) if G(n) didn't print its
   expected success marker. Print the missing proof and explain.
 - **Cookie probe is dry-run-exempt.** The skill should NOT expect a cookie
   check failure in `fire --dry-run` output — that gate is intentionally
   skipped in dry-run mode. Cookie state is enforced at the first real OS
-  trigger; failures are recorded only in the local log.
+  trigger; if cookies are dead, the user gets a wake-up email instead.

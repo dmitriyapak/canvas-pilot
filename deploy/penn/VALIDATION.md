@@ -9,23 +9,24 @@
   complete profile/cookie/PennKey state and separate master-key storage.
 - Twelve-minute heartbeat, automatic recovery and durable one-login-attempt
   reservation per incident, including across restarts. No automatic push resends.
-- Local-only bounded logs; no mail transport, alert credentials or mail startup requirement.
+- The new Penn server uses local-only logs and requires no mail transport or alert credentials.
+  Original package email utilities remain available independently.
 - Docker restart=always and supervised recovery from persistent maintenance crashes.
 - Server-side read-only daily scans; no separate model worker.
 - Write guards below dispatch and at browser/upload boundaries. Testing Compose
   forces read-only mode. Write handlers are live-untested.
 - Humanizer engines, skill families and prose handoffs restored in full.
-- Removal of quiz pacing/focus/intentional misses, synthetic quiz-event
-  posting, synthetic diagnostic prerequisites and scheduled auto-submit template.
+- Original package quiz pacing/focus/strategic misses, event posting, diagnostics,
+  scheduled auto-submit and legacy email features restored with their original tests.
 - Separate Docker/Caddy deployment files and the required VPS README section.
 
 ## Local evidence
 
-- 35 Penn-server offline tests pass: auth, protocol-level MCP calls, encrypted
+- 34 Penn-server offline tests pass: auth, protocol-level MCP calls, encrypted
   storage, recovery/restart reservations, write blocks, mock write encoding,
   confirmation replay, uncertain outcomes, local logging, supervised restart, scheduling and downloads.
 - Regression suite excluding the pre-existing uncollectable guard-kernel module:
-  435 passed, 1 skipped. The guard-kernel module imports missing
+  453 passed, 1 skipped. The guard-kernel module imports missing
   `scripts/push_public_snapshot.py`, absent from the original commit.
 - Codex runtime fixture suite and plugin drift checks pass.
 - Docker image builds, including Chromium downloads and native dependencies.

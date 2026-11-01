@@ -6,7 +6,7 @@ import datetime as dt
 from typing import Optional
 
 from scripts.cron_base import (
-    PT, LocalTemplate, CronInstance, ParamSpec, TemplateSpec,
+    PT, ActionTemplate, CronInstance, ParamSpec, TemplateSpec,
     _parse_iso, course_name_for, load_courses_yaml,
 )
 
@@ -29,7 +29,7 @@ SPEC = TemplateSpec(
 )
 
 
-class PendingReminder(LocalTemplate):
+class PendingReminder(ActionTemplate):
     """Generic local pending-assignment summary."""
 
     def pre_run(self, inst: CronInstance, dry_run: bool) -> Optional[str]:
