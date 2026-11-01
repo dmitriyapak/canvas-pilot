@@ -6,7 +6,7 @@ For tonight's validation pass we make this safe by default:
   - Lists quizzes for the course
   - Picks any quiz that is unlocked AND not yet attempted
   - For each: opens a submission, fetches questions, generates answers (LLM-style
-    heuristic for now), paces submission to roughly target_total seconds
+    heuristic for now)
   - Submits via /complete
   - If --no-submit env flag set, we open + answer but DO NOT call /complete
 
@@ -15,8 +15,6 @@ Set CANVAS_QUIZ_SUBMIT=0 in env to dry-run quizzes (recommended for first pass).
 from __future__ import annotations
 
 import os
-import random
-import time
 from pathlib import Path
 
 from .. import canvas_client as cv
@@ -124,25 +122,18 @@ class QuizSkill(Skill):
             return {"status": "error", "message": f"get submission questions failed: {e}"}
 
         n = len(questions)
-        time_limit = quiz.get("time_limit") or 30
-        target_total = min(20 * 60, int(time_limit * 60 * 0.8))
-        per_q = max(60, target_total // max(n, 1))
-
         answers = [_heuristic_answer(q) for q in questions]
         (self.work_dir / "quiz_answers.json").write_text(
             __import__("json").dumps({"questions": questions, "answers": answers}, indent=2, default=str),
             encoding="utf-8",
         )
 
-        # Pace submission
+        # Save authorized answers without synthetic interaction delays
         for i, ans in enumerate(answers):
             try:
                 cv.answer_quiz_questions(sub_id, attempt, token, [ans])
             except Exception as e:
                 self.log(f"answer q{i} failed: {e}")
-            if SUBMIT_LIVE:
-                jitter = random.randint(-15, 30)
-                time.sleep(max(30, per_q + jitter))
 
         if not SUBMIT_LIVE:
             return {"status": "draft_ready", "notes": f"answered {n} questions in dry-run (CANVAS_QUIZ_SUBMIT=0)"}

@@ -1588,30 +1588,6 @@ def complete_quiz_submission(
     )
 
 
-def post_quiz_events(
-    course_id: str | int,
-    quiz_id: str | int,
-    events: list[dict],
-    *,
-    authorization_receipt=None,
-) -> Any:
-    """Post the submission events that the Canvas web UI normally generates
-    as the student interacts with the quiz (session_started, question_viewed,
-    page_focused, ...). Without these, instructor-side analytics show an
-    empty event list which is itself a signal."""
-    _authorize_mutation(
-        authorization_receipt,
-        action="quiz.event",
-        course_id=course_id,
-        target_type="quiz",
-        target_id=quiz_id,
-    )
-    return _backend.post_json(
-        f"{BASE}/courses/{course_id}/quizzes/{quiz_id}/submissions/self/events",
-        {"quiz_submission_events": events},
-    )
-
-
 def get_quiz_attempt_feedback(course_id: str | int, quiz_id: str | int, submission_id: str | int) -> dict | None:
     """After attempt 1 completes, fetch per-question correctness if the quiz
     settings allow students to see correct answers.

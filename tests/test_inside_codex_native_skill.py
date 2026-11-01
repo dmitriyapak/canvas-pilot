@@ -5,7 +5,7 @@ from pathlib import Path
 
 from src import authorization
 from src import canvas_client as cv
-from src import course_artifacts, quiz_focus_events, quiz_pacing, quiz_strategic_miss
+from src import course_artifacts
 from src import run_state
 
 
@@ -100,7 +100,6 @@ def test_exact_signed_quiz_action_scopes_are_fail_closed() -> None:
     text = skill_text()
     expected = {
         "quiz.start",
-        "quiz.event",
         "quiz.answer",
         "quiz.complete",
         "quiz.retake",
@@ -172,47 +171,12 @@ def test_quiz_evidence_is_bound_to_exact_work_session_attempt_and_receipt() -> N
     assert 'attempt=sub["attempt"]' in text
 
 
-def test_pacing_event_order_and_false_negative_readback_are_explicit() -> None:
+def test_quiz_saves_without_fabricated_interaction() -> None:
     text = skill_text()
-    for helper in (
-        "compute_answer_schedule",
-        "build_answer_sequence",
-        "pick_blur_slots",
-        "pick_flagged_questions",
-        "maybe_flip_answers",
-    ):
-        assert helper in text
-
-    event_order = [
-        text.index("post `question_viewed`"),
-        text.index("`page_blurred` and `page_focused`"),
-        text.index("post `question_flagged`"),
-        text.index("call `cv.answer_quiz_questions`"),
-        text.index("post `question_answered`"),
-    ]
-    assert event_order == sorted(event_order)
-    assert "at least 30 seconds" in text
-    assert "about 78%" in text
-    assert "An HTTP 500 from an answer save is a possible false negative" in text
+    assert "Do not synthesize quiz events" in text
     assert "cv.get_quiz_submission_questions(submission_id)" in text
-    assert "A completion HTTP 500 is also inconclusive" in text
-    assert "cv.get_submission(course_id, assignment_id)" in text
     assert "do not automatically repeat `/complete`" in text
-
-    for symbol in (
-        "start_quiz_submission",
-        "post_quiz_events",
-        "get_quiz_submission_questions",
-        "answer_quiz_questions",
-        "complete_quiz_submission",
-        "get_quiz_attempt_feedback",
-    ):
-        assert hasattr(cv, symbol)
-    assert hasattr(quiz_pacing, "compute_answer_schedule")
-    assert hasattr(quiz_pacing, "build_answer_sequence")
-    assert hasattr(quiz_focus_events, "pick_blur_slots")
-    assert hasattr(quiz_focus_events, "pick_flagged_questions")
-    assert hasattr(quiz_strategic_miss, "maybe_flip_answers")
+    assert not hasattr(cv, "post_quiz_events")
 
 
 def test_retake_learning_audit_and_result_contract_are_complete() -> None:
@@ -243,8 +207,8 @@ def test_retake_learning_audit_and_result_contract_are_complete() -> None:
         "allowed_attempts",
         "scoring_policy",
         "agent_passes_count",
-        "human_ness_diagnostics",
-        "views_paired_with_answers",
+        "execution_diagnostics",
+        "readback_verified",
     ):
         assert field in text
 
@@ -272,7 +236,7 @@ def test_first_run_stage_mode_keeps_all_runtime_guards() -> None:
         "safety-gates",
         "open-submission",
         "arbitration",
-        "paced-submit",
+        "save-answers",
         "complete",
         "score-check",
         "retake",

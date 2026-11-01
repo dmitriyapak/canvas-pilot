@@ -1,0 +1,10 @@
+**
+!requirements-server.txt
+!src/
+!src/__init__.py
+!src/penn_server/
+!src/penn_server/**
+!deploy/
+!deploy/penn/
+!deploy/penn/Dockerfile
+**/__pycache__

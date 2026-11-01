@@ -143,12 +143,11 @@ cannot waste an attempt.
 | Runtime call | Required receipt action |
 |---|---|
 | `cv.start_quiz_submission(..., is_retake=False)` | `quiz.start` |
-| every `cv.post_quiz_events(...)` | `quiz.event` |
 | every `cv.answer_quiz_questions(...)` | `quiz.answer` |
 | `cv.complete_quiz_submission(...)` | `quiz.complete` |
 | `cv.start_quiz_submission(..., is_retake=True)` | `quiz.retake` |
 
-Attempt 1 therefore needs `quiz.start`, `quiz.event`, `quiz.answer`, and
+Attempt 1 therefore needs `quiz.start`, `quiz.answer`, and
 `quiz.complete`. Add `quiz.retake` only when the student's exact authorized
 workflow includes another attempt. No action implies another, and no wildcard,
 environment boolean, plan decision, overlay sentence, or prior receipt may
@@ -172,7 +171,7 @@ sub = cv.start_quiz_submission(
 
 Save the submission id, attempt number, validation token, `end_at`, and response
 clock to `submission.json`. Post one `session_started` event using the
-`quiz.event` scope. Fetch questions only from the student submission endpoint:
+answer authorization. Fetch questions only from the student submission endpoint:
 
 ```python
 questions = cv.get_quiz_submission_questions(submission_id)
@@ -293,30 +292,13 @@ specific consent of at least ten non-space characters, and that same text is
 recorded as `degraded_method_user_consent`. It bypasses only the arbitration
 evidence guard, never the signed mutation receipt.
 
-Use `src.quiz_focus_events.pick_flagged_questions` for a capped subset of
-low/medium-confidence questions. The optional
-`src.quiz_strategic_miss.maybe_flip_answers` branch runs only when
-`CANVAS_QUIZ_STRATEGIC_MISS=1`; never flip a high-confidence or constructed-
-response answer and retain its full log. It does not grant mutation authority.
+## 8. Save authorized answers
 
-## 8. Save answers with paced interaction
-
-Use `src.quiz_pacing.compute_answer_schedule` and `build_answer_sequence`, plus
-`src.quiz_focus_events.pick_blur_slots`. Target about 78% of the Canvas time
-limit, include non-linear revisits, and spend at least 30 seconds on every
-first-answer slot. Base deadline decisions on Canvas's response clock and
-`end_at`, not an unverified local clock.
-
-For each sequence slot, preserve this order:
-
-1. post `question_viewed` with `quiz.event`;
-2. wait the scheduled read/thinking interval;
-3. optionally post paired `page_blurred` and `page_focused` events;
-4. optionally post `question_flagged` once;
-5. call `cv.answer_quiz_questions` with `course_id`, `quiz_id`, `assignment_id`,
-   explicit `work_dir`, and `quiz.answer` authority;
-6. post `question_answered` with `quiz.event`;
-7. append timings and event outcomes to `answer_log.json`.
+Call `cv.answer_quiz_questions` with course, quiz, assignment, stable work
+folder and exact authorization receipt. Save the actual response and readback
+in `answer_log.json`. Do not synthesize quiz events, delays, focus changes,
+flags, or deliberate wrong answers. Base deadline decisions on Canvas's
+response clock and `end_at`.
 
 The answer call must receive the value from `final_answers.json` verbatim; do
 not reshape it during submission. Pass the same validated receipt and exact
@@ -355,7 +337,7 @@ scoring policy from Canvas. Use the overlay retake threshold, default `0.95`.
   `degraded_method_user_consent`.
 
 Before a retake, require a still-valid exact `quiz.retake` scope in addition to
-`quiz.event`, `quiz.answer`, and `quiz.complete`. `quiz.start` does not imply
+`quiz.answer`, and `quiz.complete`. `quiz.start` does not imply
 `quiz.retake`.
 
 Fetch attempt-1 feedback with `cv.get_quiz_attempt_feedback` when visible. Save
@@ -367,7 +349,7 @@ new work. If feedback is hidden, rearbitrate all uncertain questions.
 Archive attempt-1 pass/evidence files under `attempt-1/`. Then run four fresh
 parallel subagents for attempt 2 and write their raw JSON plus fresh
 `final_answers.json` to the canonical root paths before saving answers; archive
-the finished set under `attempt-2/` afterward. Run the same paced event/answer
+the finished set under `attempt-2/` afterward. Run the same authorized answer
 loop and completion readback. Save `attempt-2/plan.json`, submission data and
 `attempt2_method` (`feedback-driven`, `rearbitration`, or a documented hybrid).
 Under `keep_highest`, verify `kept_score` from Canvas rather than merely
@@ -429,34 +411,15 @@ A submitted quiz result includes at least:
   "attempt2_method": null,
   "attempt1_feedback_unavailable": false,
   "degraded_method_user_consent": null,
-  "human_ness_diagnostics": {
-    "user_agent_used": "<observed browser user agent>",
-    "human_hours_window": "<enforced local window>",
-    "started_at_pt_hour": 13,
-    "views_paired_with_answers": true,
-    "total_answer_time_seconds": 420,
-    "total_time_limit_seconds": 600,
-    "time_utilization": 0.7,
-    "per_question_cv": 0.45,
-    "answer_sequence_linear": false,
-    "revisits": 1,
-    "events_posted": 12,
-    "blur_events_count": 1,
-    "flagged_questions_count": 1,
-    "outlier_count": 0,
-    "strategic_miss_enabled": false,
-    "strategic_miss_count": 0
+  "execution_diagnostics": {
+    "answers_saved": 5,
+    "readback_verified": true
   }
 }
 ```
 
-Compute diagnostics from `answer_log.json`, not from expectation:
-
-- coefficient of variation is standard deviation divided by mean over initial
-  answer sleeps;
-- sequence is non-linear only when order changed or a revisit occurred;
-- view pairing is true only when every view was emitted beside its answer;
-- blur, flag, event, outlier and strategic-miss counts come from actual logs.
+Record actual answer saves and verification outcomes from `answer_log.json`.
+No synthetic interaction diagnostics are required.
 
 Also record attempt scores, `attempt2_method`, feedback availability and
 `learning_log` when applicable. Validate the final payload before atomic write.
@@ -466,7 +429,7 @@ Also record attempt scores, `attempt2_method`, feedback availability and
 Honor a single-stage directive only when both the invocation contains
 `STAGE-BY-STAGE MODE` and `<work_dir>/.first_run_stage_by_stage` exists.
 Supported ordered stages are `classify`, `reading-discovery`, `study-notes`,
-`safety-gates`, `open-submission`, `arbitration`, `paced-submit`, `complete`,
+`safety-gates`, `open-submission`, `arbitration`, `save-answers`, `complete`,
 `score-check`, `retake`, and `learning-audit`.
 
 Run exactly the named stage, require all prior artifacts, write a concise

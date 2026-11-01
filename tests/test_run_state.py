@@ -136,12 +136,10 @@ def test_quiz_numeric_fields_reject_bool(field: str) -> None:
         validate_result(_quiz_result(**{field: True}))
 
 
-def test_quiz_requires_claimed_humanness_diagnostics() -> None:
-    with pytest.raises(RunStateError, match="human_ness_diagnostics"):
-        validate_result(_quiz_result(human_ness_diagnostics=None))
-    with pytest.raises(RunStateError, match="views_paired"):
-        validate_result(_quiz_result(human_ness_diagnostics={}))
-    assert validate_result(_quiz_result())["status"] == "submitted"
+def test_quiz_does_not_require_synthetic_interaction_diagnostics() -> None:
+    result = _quiz_result()
+    result.pop("human_ness_diagnostics", None)
+    assert validate_result(result)["status"] == "submitted"
 
 
 def test_atomic_result_plan_and_ledger_writes(tmp_path: Path) -> None:

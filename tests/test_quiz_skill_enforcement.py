@@ -752,7 +752,7 @@ def test_schema_quiz_submitted_consent_passes():
     assert ok, err
 
 
-def test_schema_quiz_bulk_views_blocks():
+def test_schema_quiz_does_not_require_fabricated_views():
     ok, err = _validate({
         "kind": "quiz", "status": "submitted",
         "draft_path": "x", "submitted_at": "now",
@@ -762,5 +762,4 @@ def test_schema_quiz_bulk_views_blocks():
         "agent_passes_count": 4,
         "human_ness_diagnostics": {"views_paired_with_answers": False},
     })
-    assert not ok
-    assert "views_paired_with_answers" in err or "Layer 4C" in err
+    assert ok, err

@@ -1,0 +1,15 @@
+# Add to the EXISTING Caddy configuration; do not replace Columbia's site.
+# Attach the existing caddy:2 service to penn_proxy in its Compose definition.
+# PENN_PUBLIC_URL is https://<dedicated-name>.<VPS-IP>.sslip.io
+<dedicated-name>.<VPS-IP>.sslip.io {
+    # No access log: OAuth codes and the secret route must not enter URL logs.
+    reverse_proxy penn:8000 {
+        transport http {
+            read_timeout 120s
+        }
+    }
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        Referrer-Policy "no-referrer"
+    }
+}

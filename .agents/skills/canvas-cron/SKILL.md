@@ -1,6 +1,6 @@
 ---
 name: canvas-cron
-description: Use when managing Canvas Pilot schedules: install, inspect, pause, change, delete, or safely test scheduled scans and runs. Scan-only automation has no mutation authority; autonomous Canvas work requires a signed target-exact durable receipt.
+description: Use when managing Canvas Pilot schedules: install, inspect, pause, change, delete, or safely test scheduled scans and runs. Scheduled automation is read-only; scheduled auto-submit is removed.
 allowed-tools: Bash, PowerShell, Read, AskUserQuestion
 ---
 
@@ -60,14 +60,10 @@ results. Template kinds have different authority:
 - `email`: reads Canvas and sends a reminder email. It has no Canvas mutation
   receipt, but creating the outbound-email schedule still requires the user's
   approval.
-- `autonomous`: may run approved Canvas assignment or quiz mutations. It must
-  have a signed durable automation receipt before YAML is written or a task is
-  registered.
-
-The `all` course scope is valid only when the selected template advertises it.
-The autonomous submit template requires one concrete course. The scan template
-may use `all` as its scope label because `canvas-scan` builds the full daily
-snapshot.
+Scheduled assignment/quiz submission is removed. Never install a schedule that
+mutates Canvas. The scan template may use `all` to build the daily snapshot.
+For the Penn server, use its built-in read-only daily scan/reminder schedule;
+clients invoke tools directly and no separate Codex worker is deployed.
 
 ## 3. Choose schedule and parameters
 
@@ -84,41 +80,10 @@ Show the complete proposed instance before creating it: template, private
 course/scope label, schedule, parameters, recipient behavior, and whether it
 can mutate Canvas.
 
-## 4. Autonomous authority receipt
+## 4. Read-only schedule boundary
 
-Skip this section for `scan` and `email` templates.
-
-For an autonomous template, obtain explicit authorization for all of these
-exact fields in the current conversation:
-
-- current Canvas origin;
-- concrete course ID;
-- template ID;
-- each allowed action (for example the exact `assignment.*` and/or `quiz.*`
-  actions shown by `src.authorization.MUTATION_ACTIONS`);
-- receipt expiration;
-- whether an immediate OS-trigger test is included.
-
-Explain that this is durable scheduled delegation, not approval of one draft.
-If any field is missing or the user does not authorize it, stop without writing
-YAML, a receipt, XML, or a scheduled task.
-
-After explicit authority is verified, record it with
-`src.authorization.create_authorization_receipt` using:
-
-- `target_type="automation_template"`;
-- `target_id=<selected template ID>`;
-- the exact origin and course;
-- only the explicitly authorized assignment/quiz actions;
-- a delegation session label tied to the instance;
-- an `authority_reference` that hashes the verified user authorization;
-- `synthetic_qa=False` for a durable schedule;
-- output under `_private/cron_authorizations/<instance>.json`.
-
-The signing API enforces HMAC integrity and exact action names. The interactive
-install flow may record authority only after the user grants it. The scheduled
-template itself must never create durable authority from its YAML, prompt, an
-environment variable, or a boolean flag.
+Do not issue mutation authority to schedules. Existing scheduled-submit instances
+must remain disabled; their implementation has been removed.
 
 ## 5. Create and register, disabled first
 
@@ -127,16 +92,6 @@ Run:
 ```powershell
 python scripts/canvas_cron.py create <instance> --template <template> --course <course_id> --days <N> --time <HH:MM> --start <YYYY-MM-DD> --param key=value --recipient <recipient>
 ```
-
-For an autonomous template only, append:
-
-```powershell
---authorization-receipt _private/cron_authorizations/<instance>.json
-```
-
-Never use or recreate the removed `--authorized` boolean path. The CLI must
-validate the receipt's signature, expiry, current Canvas origin, course,
-template, and every delegated action before its first durable write.
 
 Success requires both:
 
@@ -158,14 +113,10 @@ classification data. It must not start Codex, send email, upload/submit work,
 answer a quiz, acquire a persistent lock, or call Task Scheduler mutation
 commands. `--dry-run` and `--os-trigger` are mutually exclusive.
 
-For autonomous instances, dry run still validates the durable receipt. A
-missing, expired, tampered, or mismatched receipt is a failed gate.
-
 ## 7. Optional OS-chain proof and enable
 
-An OS-trigger test is a real trigger. For an autonomous instance it may submit
-work. Run it only when the exact authorization in §4 included the immediate
-test, or after obtaining a separate explicit confirmation:
+An OS-trigger test is a real scan/reminder trigger. It may send email but must
+never mutate Canvas. Run only within the approved schedule scope:
 
 ```powershell
 python scripts/canvas_cron.py fire <instance> --os-trigger
@@ -181,18 +132,13 @@ Enable only after all applicable gates pass:
 python scripts/canvas_cron.py enable <instance>
 ```
 
-`enable` revalidates autonomous authority. Report the returned task state and
+Report the returned task state and
 next run time.
 
 ## Runtime guarantees to verify
 
 - Fresh agent work launches through `src.codex_runner.run_codex`.
 - `scan_pending` invokes only `canvas-scan` and stops before execution.
-- Autonomous fire validates durable authority before the Canvas health probe
-  and before starting Codex.
-- The fresh Codex turn revalidates the durable receipt, uses its actual
-  `CODEX_THREAD_ID`, and mints only short-lived target-exact per-item receipts
-  for already delegated actions.
 - Missing authority, Canvas auth/probe failure, Codex non-zero/timeout, and
   post-action verification failure all return non-zero.
 - A successful process code does not claim assignment correctness; it only
@@ -207,5 +153,4 @@ next run time.
 - Never call Task Scheduler mutation commands during dry run.
 - Never force-fire outside an explicitly authorized install/test operation.
 - Never continue past a failed gate.
-- Never submit to a real Canvas origin unless that exact scheduled workflow is
-  explicitly authorized. Synthetic QA authority is not valid for durable cron.
+- Never submit coursework from a schedule.

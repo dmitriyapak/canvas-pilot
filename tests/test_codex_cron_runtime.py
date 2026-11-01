@@ -11,10 +11,6 @@ import pytest
 
 from scripts import canvas_cron
 from scripts.cron_base import CronInstance, Schedule, configured_canvas_origin
-from scripts.cron_template_autonomous_submit_pending import (
-    AutonomousSubmitPending,
-    SPEC as AUTONOMOUS_SPEC,
-)
 from scripts.cron_template_scan_pending import ScanPending, SPEC as SCAN_SPEC
 
 
@@ -23,7 +19,6 @@ RUNTIME_PATHS = (
     ROOT / "scripts" / "cron_base.py",
     ROOT / "scripts" / "canvas_cron.py",
     ROOT / "scripts" / "cron_registry.py",
-    ROOT / "scripts" / "cron_template_autonomous_submit_pending.py",
     ROOT / "scripts" / "cron_template_scan_pending.py",
     ROOT / ".agents" / "skills" / "canvas-cron" / "SKILL.md",
 )
@@ -53,61 +48,6 @@ def test_runtime_contains_no_legacy_agent_launcher_or_text() -> None:
     assert "claude" not in text.lower()
     assert re.search(r"\bCC\b", text) is None
     assert "from src.codex_runner import run_codex" in text
-
-
-def test_autonomous_fire_fails_before_probe_without_signed_receipt(monkeypatch) -> None:
-    template = AutonomousSubmitPending(AUTONOMOUS_SPEC)
-    monkeypatch.setattr(template, "log", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        template,
-        "_cookie_check",
-        lambda *_args, **_kwargs: pytest.fail("probe must not run before authority"),
-    )
-
-    assert template.run(
-        _instance(template="autonomous_submit_pending"),
-        dry_run=True,
-    ) == 1
-
-
-def test_signed_automation_receipt_is_exactly_bound(monkeypatch, tmp_path: Path) -> None:
-    import scripts.cron_base as cron_base
-    from src.authorization import AuthorizationDenied, create_authorization_receipt
-
-    key_path = tmp_path / "authorization.key"
-    receipt_path = tmp_path / "_private" / "receipt.json"
-    monkeypatch.setenv("CANVAS_AUTHORIZATION_KEY_PATH", str(key_path))
-    monkeypatch.setenv("CANVAS_BASE", "https://canvas.test.invalid/api/v1")
-    monkeypatch.setattr(cron_base, "ROOT", tmp_path)
-    create_authorization_receipt(
-        canvas_origin=configured_canvas_origin(),
-        course_id="42",
-        target_type="automation_template",
-        target_id="autonomous_submit_pending",
-        actions=["assignment.submit_text"],
-        session_id="cron-delegation:test",
-        expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1),
-        authority_reference={"approval_id": "unit-test-authority"},
-        output_path=receipt_path,
-    )
-    template = AutonomousSubmitPending(AUTONOMOUS_SPEC)
-    receipt = template.validate_runtime_authorization(
-        _instance(
-            template="autonomous_submit_pending",
-            receipt=str(receipt_path),
-        )
-    )
-    assert receipt["target_type"] == "automation_template"
-    assert receipt["target_id"] == "autonomous_submit_pending"
-
-    with pytest.raises(AuthorizationDenied, match="course"):
-        template.validate_runtime_authorization(
-            _instance(
-                template="autonomous_submit_pending",
-                course_id="different-course",
-                receipt=str(receipt_path),
-            )
-        )
 
 
 def test_codex_child_nonzero_is_propagated(monkeypatch, tmp_path: Path) -> None:
@@ -178,16 +118,6 @@ def test_scan_verifier_accepts_fresh_zero_pending_terminal_state(tmp_path: Path)
     assert verification["no_pending"] is True
     assert verification["pending_count"] == 0
     assert template.result_exit_code(_instance(), {"exit_code": 0}, verification) == 0
-
-
-def test_autonomous_post_state_failure_is_nonzero() -> None:
-    template = AutonomousSubmitPending(AUTONOMOUS_SPEC)
-    code = template.result_exit_code(
-        _instance(template="autonomous_submit_pending"),
-        {"exit_code": 0, "targets": [{"id": "7"}]},
-        {"7": "still_pending"},
-    )
-    assert code == 1
 
 
 def test_canvas_probe_failure_is_nonzero_for_scan(monkeypatch) -> None:
@@ -305,25 +235,3 @@ def test_dry_run_and_os_trigger_is_rejected_before_scheduler(monkeypatch) -> Non
         )
     )
     assert code == 1
-
-
-def test_create_missing_receipt_fails_before_any_scheduler_write(monkeypatch) -> None:
-    template = AutonomousSubmitPending(AUTONOMOUS_SPEC)
-    monkeypatch.setattr(canvas_cron.cron_registry, "get_template", lambda _name: template)
-    monkeypatch.setattr(
-        canvas_cron,
-        "schtasks_create_from_xml",
-        lambda *_args, **_kwargs: pytest.fail("missing authority must fail before scheduler"),
-    )
-    args = argparse.Namespace(
-        name="no_receipt",
-        template="autonomous_submit_pending",
-        course="42",
-        days=1,
-        time="19:00",
-        start="2030-01-01",
-        param=[],
-        recipient="local-test@example.invalid",
-        authorization_receipt=None,
-    )
-    assert canvas_cron.cmd_create(args) == 1

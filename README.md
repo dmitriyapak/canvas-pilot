@@ -37,6 +37,19 @@ workflows do not depend on it.
 See [Canvas Pilot vs Canvas MCP](./docs/COMPARISON.md) for the longer
 comparison.
 
+## Penn Canvas Pilot 2.0 server
+
+The Penn server lives in `src/penn_server/`, with deployment instructions in
+[deploy/penn/README.md](deploy/penn/README.md). It provides authenticated
+Streamable HTTP tools for Grok chat, ChatGPT chat, Dot, Grok Bot and Codex.
+Clients orchestrate workflows directly; no separate agent worker runs on the VPS.
+Encrypted browser/PennKey state, heartbeat and automatic recovery minimize login.
+All real Canvas writes remain blocked during testing; write tools are live-untested.
+The text humanizer, synthetic quiz pacing/focus/intentional misses, and scheduled
+auto-submit have been removed. Existing drafting and authorized interactive
+submission workflows remain available.
+
+
 ## Workflow
 
 ```mermaid
@@ -83,8 +96,7 @@ Canvas Pilot:
     Drafts mirrored to final_drafts/ for review.
 ```
 
-You review the drafts and upload manually by default. Auto-submit only happens
-through an explicitly configured cron authority. In an interactive session,
+You review the drafts and upload manually by default. Scheduled auto-submit is removed. In an interactive session,
 submission requires a later exact `submit N`, `take quiz N`, or `retake quiz N`
 message, a verified local result, and a short-lived target-exact receipt.
 

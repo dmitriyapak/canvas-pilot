@@ -52,7 +52,7 @@ overlay may define:
 - where the real spec and samples live;
 - voice register and citation style;
 - figure/film-caption conventions;
-- persona and humanizer settings;
+- writing preferences;
 - assignment-name routing patterns.
 
 If the overlay or course block is missing, write `error` with
@@ -69,14 +69,14 @@ sources/
 sample_anchors.md
 research_findings.md          # conditional
 outline.md
-draft/essay.pre-humanizer.docx
+draft/essay.verified.docx
 draft/essay.docx
 audit/round-1.json
 verification.log
 result.json
 ```
 
-Keep sources, audit evidence, and pre-humanizer text so later review can compare
+Keep sources, audit evidence, and verified text so later review can compare
 meaning and rubric coverage.
 
 ## Stage 1: reconstruct the specification
@@ -133,7 +133,7 @@ Build `outline.md` before prose. It must map each prompt/rubric requirement to a
 section and identify the thesis, topic sentences, source evidence, and
 transitions.
 
-Draft section by section into `draft/essay.pre-humanizer.docx`:
+Draft section by section into `draft/essay.verified.docx`:
 
 - follow the overlay voice register;
 - keep thesis and topic sentences directly responsive to the prompt;
@@ -188,28 +188,10 @@ consistency, voice, source-personal balance, and every rubric criterion. Save
 verification and audit, at most three rounds. Remaining HIGH gaps produce
 `error`.
 
-## Stage 7: humanizer handoff
+## Stage 7: preserve the verified draft
 
-If the overlay enables humanization, invoke the Codex
-`canvas-humanizer` skill with absolute paths:
-
-```text
-draft_path=<work>/draft/essay.pre-humanizer.docx
-output_path=<work>/draft/essay.docx
-voice_register=<overlay value>
-course_id=<course_id>
-assignment_id=<assignment_id>
-work_dir=<stable work directory>
-```
-
-The humanizer is a local-file transformation. After it returns, rerun word
-count, citation matching, placeholder, structure, and source-grounding checks.
-If the transformation fails, preserve the pre-humanizer draft as
-`draft/essay.docx`, record the diagnostic in result metadata, and continue only
-if the verified original draft is intact.
-
-If humanization is disabled, copy the verified pre-humanizer draft to the
-canonical `draft/essay.docx`.
+Copy the verified source-grounded draft to `draft/essay.docx`. Preserve its
+citations, meaning and audit evidence. No text humanization pass is performed.
 
 ## Stage 8: final result
 
@@ -227,7 +209,7 @@ write_course_result(
     metadata={
         "skill": "canvas-essay",
         "verification_log_path": str(work_dir / "verification.log"),
-        "humanizer_applied": humanizer_applied,
+        "verified_draft_preserved": True,
         "audit_rounds": audit_rounds,
     },
 )
