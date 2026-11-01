@@ -727,3 +727,20 @@ def test_retired_alert_records_are_removed_without_touching_auth(setup):
     assert vault.read("outbox") is None
     for name in ("browser", "pennkey", "oauth", "session"):
         assert vault.read(name) == {"simulated": "value"}
+
+
+def test_production_override_enables_tools_but_keeps_test_default_read_only():
+    from pathlib import Path
+    import yaml
+
+    root = Path(__file__).resolve().parents[2]
+    base = yaml.safe_load((root / "deploy/penn/compose.yaml").read_text())
+    production = yaml.safe_load(
+        (root / "deploy/penn/compose.production.yaml").read_text()
+    )
+    assert base["services"]["penn"]["environment"]["PENN_TESTING_READ_ONLY"] == "true"
+    assert (
+        production["services"]["penn"]["environment"]["PENN_TESTING_READ_ONLY"]
+        == "false"
+    )
+    assert base["services"]["penn"]["restart"] == "always"

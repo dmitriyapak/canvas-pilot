@@ -22,11 +22,11 @@
 
 ## Local evidence
 
-- 34 Penn-server offline tests pass: auth, protocol-level MCP calls, encrypted
+- 35 Penn-server offline tests pass: auth, protocol-level MCP calls, encrypted
   storage, recovery/restart reservations, write blocks, mock write encoding,
   confirmation replay, uncertain outcomes, local logging, supervised restart, scheduling and downloads.
 - Regression suite excluding the pre-existing uncollectable guard-kernel module:
-  453 passed, 1 skipped. The guard-kernel module imports missing
+  454 passed, 1 skipped. The guard-kernel module imports missing
   `scripts/push_public_snapshot.py`, absent from the original commit.
 - Codex runtime fixture suite and plugin drift checks pass.
 - Docker image builds, including Chromium downloads and native dependencies.
@@ -66,3 +66,7 @@ and identity, exercise read tools and recovery, and configure the five clients.
 All real writes must stay blocked throughout this validation. Real Duo behavior,
 New Quizzes and student peer-review/rubric endpoint permissions require honest
 capability reporting; simulations cannot establish these live capabilities.
+
+Production deployment override (`compose.production.yaml`) is validated and enables
+all registered write tools. Remote deployment is pending secure OVH host/SSH key
+provisioning and outbound TCP access; no server resources have been changed.

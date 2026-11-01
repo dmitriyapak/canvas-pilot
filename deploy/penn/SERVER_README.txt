@@ -27,3 +27,7 @@ Backups: encrypted state only, with separately protected recovery copies of keys
 Removal: stop Penn, remove its Caddy site/network attachment, validate/reload
 Caddy, remove only Penn resources after deciding retention. Do not remove Columbia.
 Update this section for every server addition or operational change.
+Production profile: add -f deploy/penn/compose.production.yaml to the Compose command.
+The production override enables registered write tools; testing uses the base file only.
+Production verification remains read-only. No scheduled job is activated by this override.
+Record the exact deployed PR commit and active profiles here before starting the service.

@@ -93,3 +93,28 @@ REST-inaccessible discussions need explicit capability reporting, not fallback
 claims. Verify actual Penn login hosts and Duo flow before acceptance.
 
 No server has been changed merely by adding these deployment files to the repo.
+
+## Production tool activation
+
+The default Compose file keeps every real Canvas write blocked for testing.
+For the authorized production deployment, include the explicit override:
+
+```sh
+docker compose --env-file deploy/penn/.env \
+  -f deploy/penn/compose.yaml -f deploy/penn/compose.production.yaml up -d --build
+```
+
+This enables all registered read/write tools. OAuth write scope, action-bound
+confirmation and Canvas permissions remain enforced. Deployment validation must
+still use reads only; do not submit, message, mark read/done or alter coursework
+to test production. Use the same two Compose files for subsequent production
+operations so a recreation does not accidentally switch back to testing mode.
+
+The checkout retains the complete original package, including its optional quiz,
+humanizer, scheduled-submission and legacy email workflows. Making those features
+available does not install a separate agent worker, choose courses/schedules,
+create mutation authority, or start unsolicited submissions. Existing configured
+jobs must be inventoried on the VPS before any activation.
+
+Keep the PR unmerged: deploy its reviewed branch/commit directly, recording the
+exact revision and active Compose files in `/home/ubuntu/README.txt`.

@@ -1,0 +1,6 @@
+# Explicit production override. Never use for real-course write tests.
+# This enables tool availability, not autonomous submissions or scheduled jobs.
+services:
+  penn:
+    environment:
+      PENN_TESTING_READ_ONLY: 'false'
