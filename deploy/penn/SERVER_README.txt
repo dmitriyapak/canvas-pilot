@@ -31,3 +31,13 @@ Production profile: add -f deploy/penn/compose.production.yaml to the Compose co
 The production override enables registered write tools; testing uses the base file only.
 Production verification remains read-only. No scheduled job is activated by this override.
 Record the exact deployed PR commit and active profiles here before starting the service.
+
+
+Pending Panopto addition (NOT DEPLOYED; append to /home/ubuntu/README.txt only
+when the corresponding Penn deployment actually occurs):
+Three read-only MCP tools list Panopto lectures, read timestamped captions and
+read the owner's All Time Percent Completed. Panopto cookies use the existing
+Vault encryption; LTI authentication reuses the Canvas session manager. No
+playback, heartbeats or viewing-event writes are permitted. See PANOPTO.md for
+validation blockers, exact deployment commands and remaining live checks.
+Record exact deployed commit and real-course validation results at deployment.

@@ -833,6 +833,9 @@ class CanvasTools:
                 self.vault.write("last_mutation", audit)
 
     def register(self, mcp):
+        from .panopto import register
+
+        register(self, mcp)
         for spec in TOOLS:
 
             def make(spec):
@@ -1005,3 +1008,4 @@ class CanvasTools:
         async def get_session_status() -> dict:
             """Read sanitized authentication recovery status."""
             return self.session.status()
+
