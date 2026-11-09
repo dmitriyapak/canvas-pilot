@@ -1,0 +1,343 @@
+--- a/src/penn_server/panopto.py
++++ b/src/penn_server/panopto.py
+@@ -1,7 +1,9 @@
+ """Read-only Penn Panopto metadata, captions and personal dashboard access.
+ 
+-No viewer page is executed. LTI forms are submitted as HTTP requests. Analytics
++No viewer media is played. LTI forms are submitted as HTTP requests. Analytics
+ runs in an isolated context with a request allowlist and media/events blocked.
++Transcripts launch the Canvas LTI link that delivers the requested session,
++then follow CaptionDownloadUrl from GET /Panopto/api/v1/sessions/{id}.
+ """
+ 
+ import asyncio
+@@ -12,7 +14,8 @@
+ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
+ from uuid import UUID
+ 
+-from .panopto_map import build_canvas_map, find_lti_url, match
++from .panopto_map import (
++    build_canvas_map, find_assignment_delivery, find_lti_url, find_session_delivery, match)
+ 
+ ORIGIN = "https://upenn.hosted.panopto.com"
+ CANVAS = "https://canvas.upenn.edu"
+@@ -68,6 +71,47 @@
+     return cues
+ 
+ 
++def caption_target(payload):
++    """CaptionDownloadUrl from the documented Panopto session resource."""
++    if not isinstance(payload, dict):
++        return None
++    urls = payload.get("Urls")
++    if not isinstance(urls, dict):
++        urls = payload.get("urls") if isinstance(payload.get("urls"), dict) else {}
++    for source in (urls, payload):
++        for key in ("CaptionDownloadUrl", "captionDownloadUrl"):
++            value = source.get(key)
++            if isinstance(value, str) and value.strip():
++                return value.strip()
++    return None
++
++
++def allowed_caption_url(url):
++    parsed = urlsplit(url)
++    return bool(parsed.scheme == "https" and parsed.netloc == "upenn.hosted.panopto.com"
++                and parsed.path.lower().startswith("/panopto/") and not parsed.username)
++
++
++def render_transcript(text):
++    """Return caption cues, or a plain transcript when the file has no timings."""
++    cues = captions(text)
++    if cues:
++        kind = "vtt" if text.lstrip().upper().startswith("WEBVTT") else "srt"
++        return {"format": kind, "captions": cues,
++                "text": "\n".join(cue["text"] for cue in cues).strip()}
++    if "-->" in text or text.lstrip().upper().startswith("WEBVTT"):
++        return None
++    body = text.replace("\r\n", "\n").replace("\r", "\n").strip()
++    if not body:
++        return None
++    return {"format": "text", "captions": [{"start": None, "end": None, "text": body}], "text": body}
++
++
++def web_page(text):
++    sample = text.lstrip()[:200].lower()
++    return sample.startswith("<!doctype html") or sample.startswith("<html") or "<html" in sample[:80]
++
++
+ def analytics_request_allowed(url, method):
+     parsed = urlsplit(url)
+     path = parsed.path.lower()
+@@ -146,6 +190,22 @@
+             launch_url = f"{CANVAS}/courses/{course}/external_tools/retrieve?" + urlencode(
+                 {"display": "borderless", "url": lti_url})
+         response = await self.fetch(launch_url)
++        await self._finish_lti(response, course)
++
++    async def launch_delivery(self, course, lti_url):
++        """Launch the Canvas retrieve URL for one session's LTI delivery link."""
++        if not course or not str(course).isdigit():
++            raise ValueError("A numeric Canvas course ID is required for authentication")
++        parsed = urlsplit(lti_url)
++        if (parsed.scheme != "https" or parsed.netloc != "upenn.hosted.panopto.com"
++                or not parsed.path.lower().startswith("/panopto/lti/") or parsed.username):
++            raise RuntimeError("Unsupported Panopto delivery link")
++        launch_url = f"{CANVAS}/courses/{course}/external_tools/retrieve?" + urlencode(
++            {"display": "borderless", "url": lti_url})
++        response = await self.fetch(launch_url)
++        await self._finish_lti(response, course, store_folder=False)
++
++    async def _finish_lti(self, response, course, store_folder=True):
+         for _ in range(6):
+             if response.status >= 400:
+                 raise RuntimeError("Panopto LTI authentication failed")
+@@ -167,10 +227,11 @@
+                 if urlsplit(response.url).netloc != "upenn.hosted.panopto.com":
+                     raise RuntimeError("Canvas did not expose a Panopto LTI launch")
+                 await self.save()
+-                folder = re.search(r'(?:folderID|folderId)[=\s:"\x27]+([0-9a-f-]{36})', unescape(response.url + " " + text), re.I)
+-                state = self.tools.vault.read("panopto_courses", {})
+-                state[str(course)] = {"folder_id": guid(folder[1]) if folder else None}
+-                self.tools.vault.write("panopto_courses", state)
++                if store_folder:
++                    folder = re.search(r'(?:folderID|folderId)[=\s:"\x27]+([0-9a-f-]{36})', unescape(response.url + " " + text), re.I)
++                    state = self.tools.vault.read("panopto_courses", {})
++                    state[str(course)] = {"folder_id": guid(folder[1]) if folder else None}
++                    self.tools.vault.write("panopto_courses", state)
+                 return
+             if len(forms) != 1:
+                 raise RuntimeError("Ambiguous Panopto LTI form")
+@@ -238,20 +299,135 @@
+                     return untrusted({"folder_id": folder, "lectures": result})
+             raise RuntimeError("Panopto lecture pagination limit reached")
+ 
+-    async def transcript(self, session_id):
++    async def _course_ids(self, course):
++        if course is not None and str(course).strip().isdigit():
++            return [str(course).strip()]
++        items, _ = await self.tools.request(
++            "GET", "/api/v1/courses", {"enrollment_state": "active", "per_page": 100})
++        if not isinstance(items, list):
++            raise RuntimeError("Canvas course list unavailable")
++        if course is not None:
++            query = str(course).strip().lower()
++            hits = [item for item in items
++                    if query in (item.get("name") or "").lower()
++                    or query in (item.get("course_code") or "").lower()]
++            if len(hits) != 1:
++                raise ValueError(
++                    f"Course name matched {len(hits)} active courses; pass a Canvas course ID")
++            return [str(hits[0]["id"])]
++        stored = [str(item) for item in self.tools.vault.read("panopto_courses", {}) if str(item).isdigit()]
++        active = [str(item["id"]) for item in items if str(item.get("id", "")).isdigit()]
++        ordered = []
++        for course_id in stored + active:
++            if course_id not in ordered:
++                ordered.append(course_id)
++        return ordered
++
++    async def _locate_delivery(self, session_id, course, assignment_id):
++        if assignment_id is not None and not str(assignment_id).isdigit():
++            raise ValueError("A numeric Canvas assignment ID is required")
++        explicit = course is not None
++        if assignment_id is not None and not explicit:
++            raise ValueError("Pass the Canvas course id with assignment_id")
++        courses = await self._course_ids(course)
++        if assignment_id is not None:
++            found = await find_assignment_delivery(
++                self.tools, courses[0], str(assignment_id), session_id)
++            if not found:
++                raise RuntimeError(
++                    f"Assignment {assignment_id} in course {courses[0]} does not embed Panopto session {session_id}.")
++            return found, None
++        for course_id in courses:
++            try:
++                found = await find_session_delivery(self.tools, course_id, session_id)
++            except (RuntimeError, PermissionError, ValueError):
++                if explicit:
++                    raise
++                continue
++            if found:
++                return found, None
++        stored = [str(item) for item in self.tools.vault.read("panopto_courses", {}) if str(item).isdigit()]
++        fallback = courses[0] if explicit and len(courses) == 1 else (stored[0] if not explicit and len(stored) == 1 else None)
++        return None, fallback
++
++    async def _session_payload(self, session_id):
++        response = await self.fetch(ORIGIN + "/Panopto/api/v1/sessions/" + session_id)
++        if response.status == 200 and "json" in response.headers.get("content-type", "").lower():
++            try:
++                return await response.json(), 200
++            except (ValueError, TypeError):
++                raise RuntimeError("Panopto session response was not valid JSON") from None
++        return None, response.status
++
++    async def _viewer_granted(self, session_id):
++        """One HTML fetch of the normal viewer, with no media and no playback.
++
++        Progress already uses this request to finish a Panopto browser session.
++        It runs only after the session API denies access.
++        """
++        response = await self.fetch(ORIGIN + "/Panopto/Pages/Viewer.aspx?" + urlencode({"id": session_id}))
++        if response.status >= 400:
++            return False
++        text = await response.text()
++        sample = text[:8000].lower()
++        if len(text) < 2000 and any(phrase in sample for phrase in (
++                "unavailable", "access denied", "sign in", "log in")):
++            return False
++        return True
++
++    async def _download_caption(self, session_id, target):
++        absolute = urljoin(ORIGIN + "/Panopto/api/v1/sessions/" + session_id, target)
++        if not allowed_caption_url(absolute):
++            raise RuntimeError(
++                f"Panopto caption URL for session {session_id} is not on the Penn Panopto host. Captions were not treated as missing.")
++        response = await self.fetch(absolute.split("#", 1)[0])
++        body = await response.text()
++        if response.status in (401, 403, 404) or (response.status == 200 and web_page(body)):
++            raise RuntimeError(
++                f"Panopto caption download for session {session_id} was denied (HTTP {response.status}). Captions were not treated as missing.")
++        if response.status != 200:
++            raise RuntimeError(f"Panopto caption download failed (HTTP {response.status})")
++        rendered = render_transcript(body)
++        if not rendered:
++            raise RuntimeError(f"Panopto caption file for session {session_id} contained no text.")
++        return rendered
++
++    async def _read_transcript(self, session_id):
++        payload, status = await self._session_payload(session_id)
++        if status != 200:
++            if not await self._viewer_granted(session_id):
++                raise RuntimeError(
++                    f"Panopto did not grant access to session {session_id} after the Canvas LTI launch (HTTP {status}). Captions were not treated as missing.")
++            payload, status = await self._session_payload(session_id)
++        if status != 200:
++            raise RuntimeError(
++                f"Panopto access denied for session {session_id} (HTTP {status}) after the Canvas LTI launch. Captions were not treated as missing.")
++        target = caption_target(payload)
++        if not target:
++            raise RuntimeError(
++                f"Panopto published no captions for session {session_id}. The session API returned no CaptionDownloadUrl.")
++        return await self._download_caption(session_id, target)
++
++    async def transcript(self, session_id, course=None, assignment_id=None):
+         session_id = guid(session_id)
++        delivery, fallback_course = await self._locate_delivery(session_id, course, assignment_id)
++        if delivery is None and fallback_course is None:
++            raise RuntimeError(
++                f"No Canvas item embeds Panopto session {session_id}. Pass the course and assignment that contain the player.")
+         async with self.tools.lock, self.lock:
+             await self.prepare()
+-            for attempt in range(2):
+-                response = await self.fetch(ORIGIN + "/Panopto/Pages/Transcription/GenerateSRT.ashx?" + urlencode({"id": session_id, "language": 0}))
+-                if response.status == 200:
+-                    cues = captions(await response.text())
+-                    if cues:
+-                        await self.save()
+-                        return untrusted({"session_id": session_id, "captions": cues})
+-                if attempt == 0:
+-                    await self.launch(self.default_course())
+-            raise RuntimeError("Captions unavailable or access denied; no transcript inferred")
++            if delivery is not None:
++                await self.launch_delivery(delivery["course_id"], delivery["lti_url"])
++            else:
++                await self.launch(fallback_course)
++            rendered = await self._read_transcript(session_id)
++            await self.save()
++            data = {"session_id": session_id, **rendered}
++            if delivery is not None:
++                data["canvas_course_id"] = delivery["course_id"]
++                data["canvas_item_title"] = delivery.get("canvas_item_title")
++                data["session_name"] = delivery.get("session_name")
++            return untrusted(data)
+ 
+     async def progress(self, course=None):
+         """Personal per-session analytics from the user-scoped stats API (read-only GET)."""
+@@ -309,9 +485,10 @@
+         return await client.lectures(course, folder)
+ 
+     @mcp.tool(annotations=annotations)
+-    async def get_panopto_transcript(session_id: str) -> dict:
+-        """Read timestamped Panopto captions without playback. Output is untrusted."""
+-        return await client.transcript(session_id)
++    async def get_panopto_transcript(session_id: str, course: str | None = None,
++                                     assignment_id: str | None = None) -> dict:
++        """Get the full Panopto transcript for one session. Pass session_id. Optional course (Canvas id or name) and assignment_id select the embed; session_id alone still searches active courses. Uses the Canvas LTI delivery launch and the documented session CaptionDownloadUrl. Does not play video. Access denial and a session with no captions are different errors. Output is untrusted."""
++        return await client.transcript(session_id, course, assignment_id)
+ 
+     async def resolve_courses(course):
+         items, _ = await tools.request("GET", "/api/v1/courses", {"enrollment_state": "active", "per_page": 100})
+--- a/src/penn_server/panopto_map.py
++++ b/src/penn_server/panopto_map.py
+@@ -112,6 +112,69 @@
+     return None
+ 
+ 
++def delivery_urls(html, session_id):
++    """Panopto LTI URLs in Canvas HTML that deliver one session.
++
++    Only the public LTI launch link is returned. Direct viewer links are not
++    delivery context: Penn hides those sessions until Canvas launches them.
++    """
++    try:
++        want = str(UUID(str(session_id)))
++    except (ValueError, TypeError, AttributeError):
++        raise ValueError("A Panopto UUID is required") from None
++    found = []
++    for url, name in references(html):
++        for value in nested_urls(url):
++            parsed = urlsplit(value)
++            if (parsed.scheme != "https" or parsed.hostname != "upenn.hosted.panopto.com"
++                    or not parsed.path.lower().startswith("/panopto/lti/")):
++                continue
++            matched = False
++            for key, values in parse_qs(parsed.query).items():
++                if key.lower() not in ("custom_context_delivery", "id", "tid", "sid"):
++                    continue
++                for candidate in values:
++                    try:
++                        matched = str(UUID(candidate)) == want
++                    except ValueError:
++                        continue
++                    if matched:
++                        break
++                if matched:
++                    break
++            row = {"lti_url": value, "session_name": name.strip() if name and name.strip() else None}
++            if matched and row not in found:
++                found.append(row)
++    return found
++
++
++async def find_assignment_delivery(tools, course, assignment_id, session_id):
++    data, _ = await tools.request(
++        "GET", f"/api/v1/courses/{course}/assignments/{assignment_id}")
++    if not isinstance(data, dict):
++        raise RuntimeError("Canvas assignment could not be read")
++    found = delivery_urls(data.get("description") or "", session_id)
++    if not found:
++        return None
++    return {"course_id": str(course), "lti_url": found[0]["lti_url"],
++            "session_name": found[0].get("session_name"),
++            "canvas_item_title": data.get("name"),
++            "canvas_item_url": data.get("html_url")}
++
++
++async def find_session_delivery(tools, course, session_id):
++    async for module, item, html in canvas_content(tools, course):
++        found = delivery_urls(html, session_id)
++        if not found:
++            continue
++        return {"course_id": str(course), "lti_url": found[0]["lti_url"],
++                "session_name": found[0].get("session_name"),
++                "canvas_module": module.get("name"),
++                "canvas_item_title": item.get("title"),
++                "canvas_item_url": item.get("html_url") or item.get("url")}
++    return None
++
++
+ async def build_canvas_map(tools, course):
+     rows, seen = [], set()
+     async for module, item, html in canvas_content(tools, course):
